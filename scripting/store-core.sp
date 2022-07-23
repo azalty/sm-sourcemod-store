@@ -1,4 +1,5 @@
 #pragma semicolon 1
+#pragma newdecls required
 
 #include <sourcemod>
 #include <store/store-core>
@@ -19,18 +20,18 @@ enum struct MenuItem
 	int MenuItemOrder;
 }
 
-new String:g_currencyName[64];
-new String:g_menuCommands[32][32];
-new String:g_creditsCommand[32];
+char g_currencyName[64];
+char g_menuCommands[32][32];
+char g_creditsCommand[32];
 
-new g_iMenuCommandCount;
+int g_iMenuCommandCount;
 
 MenuItem g_menuItems[MAX_MENU_ITEMS + 1];
-new g_menuItemCount = 0;
+int g_menuItemCount = 0;
 
-new g_firstConnectionCredits = 0;
+int g_firstConnectionCredits = 0;
 
-new bool:g_allPluginsLoaded = false;
+bool g_allPluginsLoaded = false;
 
 /**
  * Called before plugin is loaded.
@@ -42,7 +43,7 @@ new bool:g_allPluginsLoaded = false;
  *
  * @return          APLRes_Success for load success, APLRes_Failure or APLRes_SilentFailure otherwise.
  */
-public APLRes:AskPluginLoad2(Handle:myself, bool:late, String:error[], err_max)
+public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
 {
 	CreateNative("Store_OpenMainMenu", Native_OpenMainMenu);
 	CreateNative("Store_AddMainMenuItem", Native_AddMainMenuItem);
@@ -52,7 +53,7 @@ public APLRes:AskPluginLoad2(Handle:myself, bool:late, String:error[], err_max)
 	return APLRes_Success;
 }
 
-public Plugin:myinfo =
+public Plugin myinfo =
 {
 	name        = "[Store] Core",
 	author      = "alongub, drixevel",
@@ -64,7 +65,7 @@ public Plugin:myinfo =
 /**
  * Plugin is loading.
  */
-public OnPluginStart()
+public void OnPluginStart()
 {
 	CreateConVar("store_version", STORE_VERSION, "Store Version", FCVAR_SPONLY|FCVAR_REPLICATED|FCVAR_NOTIFY);
 
@@ -87,7 +88,7 @@ public OnPluginStart()
 /**
  * All plugins have been loaded.
  */
-public OnAllPluginsLoaded()
+public void OnAllPluginsLoaded()
 {
 	SortMainMenuItems();
 	g_allPluginsLoaded = true;
@@ -103,7 +104,7 @@ public OnAllPluginsLoaded()
  * @param client		Client index.
  * @noreturn
  */
-public OnClientPostAdminCheck(client)
+public void OnClientPostAdminCheck(int client)
 {	
 	Store_RegisterClient(client, g_firstConnectionCredits);
 }
@@ -117,16 +118,16 @@ public OnClientPostAdminCheck(client)
  *
  * @return				Action to take.
  */
-public Action:Command_Say(client, const String:command[], args)
+public Action Command_Say(int client, const char[] command, int args)
 {
 	if (0 < client <= MaxClients && !IsClientInGame(client)) 
 		return Plugin_Continue;   
 
-	decl String:text[256];
+	char text[256];
 	GetCmdArgString(text, sizeof(text));
 	StripQuotes(text);
 	
-	for (new index = 0; index < g_iMenuCommandCount; index++) 
+	for (int index = 0; index < g_iMenuCommandCount; index++) 
 	{
 		if (StrEqual(g_menuCommands[index], text))
 		{
@@ -142,19 +143,19 @@ public Action:Command_Say(client, const String:command[], args)
 	return Plugin_Continue;
 }
 
-public Action:Command_OpenMainMenu(client, args)
+public Action Command_OpenMainMenu(int client, int args)
 {
 	OpenMainMenu(client);
 	return Plugin_Handled;
 }
 
-public Action:Command_Credits(client, args)
+public Action Command_Credits(int client, int args)
 {
 	Store_GetCredits(GetSteamAccountID(client), OnCommandGetCredits, client);
 	return Plugin_Handled;
 }
 
-public Action:Command_GiveCredits(client, args)
+public Action Command_GiveCredits(int client, int args)
 {
 	if (args < 2)
 	{
@@ -162,18 +163,18 @@ public Action:Command_GiveCredits(client, args)
 		return Plugin_Handled;
 	}
     
-	decl String:target[65];
-	decl String:target_name[MAX_TARGET_LENGTH];
-	decl target_list[MAXPLAYERS];
-	decl target_count;
-	decl bool:tn_is_ml;
+	char target[65];
+	char target_name[MAX_TARGET_LENGTH];
+	int target_list[MAXPLAYERS];
+	int target_count;
+	bool tn_is_ml;
     
 	GetCmdArg(1, target, sizeof(target));
     
-	new String:money[32];
+	char money[32];
 	GetCmdArg(2, money, sizeof(money));
     
-	new imoney = StringToInt(money);
+	int imoney = StringToInt(money);
  
 	if ((target_count = ProcessTargetString(
 			target,
@@ -190,10 +191,10 @@ public Action:Command_GiveCredits(client, args)
 	}
 
 
-	new accountIds[target_count];
-	new count = 0;
+	int[] accountIds = new int[target_count];
+	int count = 0;
 
-	for (new i = 0; i < target_count; i++)
+	for (int i = 0; i < target_count; i++)
 	{
 		if (IsClientInGame(target_list[i]) && !IsFakeClient(target_list[i]))
 		{
@@ -208,7 +209,7 @@ public Action:Command_GiveCredits(client, args)
 	return Plugin_Handled;
 }
 
-public OnCommandGetCredits(credits, any:client)
+public void OnCommandGetCredits(int credits, any client)
 {
 	PrintToChat(client, "%s%t", STORE_PREFIX, "Store Menu Title", credits, g_currencyName);
 }
@@ -216,11 +217,11 @@ public OnCommandGetCredits(credits, any:client)
 /**
  * Load plugin config.
  */
-LoadConfig() 
+void LoadConfig() 
 {
-	new Handle:kv = CreateKeyValues("root");
+	KeyValues kv = CreateKeyValues("root");
 	
-	decl String:path[PLATFORM_MAX_PATH];
+	char path[PLATFORM_MAX_PATH];
 	BuildPath(Path_SM, path, sizeof(path), "configs/store/core.cfg");
 	
 	if (!FileToKeyValues(kv, path)) 
@@ -229,7 +230,7 @@ LoadConfig()
 		SetFailState("Can't read config file %s", path);
 	}
 
-	decl String:menuCommands[255];
+	char menuCommands[255];
 	KvGetString(kv, "mainmenu_commands", menuCommands, sizeof(menuCommands));
 	g_iMenuCommandCount = ExplodeString(menuCommands, " ", g_menuCommands, sizeof(g_menuCommands), sizeof(g_menuCommands[]));
 	
@@ -253,9 +254,9 @@ LoadConfig()
  *
  * @noreturn
  */ 
-AddMainMenuItem(const String:displayName[], const String:description[] = "", const String:value[] = "", Handle:plugin = INVALID_HANDLE, Function callback = INVALID_FUNCTION, order = 32)
+void AddMainMenuItem(const char[] displayName, const char[] description = "", const char[] value = "", Handle plugin = INVALID_HANDLE, Function callback = INVALID_FUNCTION, int order = 32)
 {
-	new item;
+	int item;
 	
 	for (; item <= g_menuItemCount; item++)
 	{
@@ -282,13 +283,13 @@ AddMainMenuItem(const String:displayName[], const String:description[] = "", con
  *
  * @noreturn
  */ 
-SortMainMenuItems()
+void SortMainMenuItems()
 {
-	new sortIndex = sizeof(g_menuItems) - 1;
+	int sortIndex = sizeof(g_menuItems) - 1;
 	
-	for (new x = 0; x < g_menuItemCount; x++) 
+	for (int x = 0; x < g_menuItemCount; x++) 
 	{
-		for (new y = 0; y < g_menuItemCount; y++) 
+		for (int y = 0; y < g_menuItemCount; y++) 
 		{
 			if (g_menuItems[x].MenuItemOrder < g_menuItems[y].MenuItemOrder)
 			{
@@ -307,24 +308,24 @@ SortMainMenuItems()
  *
  * @noreturn
  */
-OpenMainMenu(client)
+void OpenMainMenu(int client)
 {	
 	Store_GetCredits(GetSteamAccountID(client), OnGetCreditsComplete, GetClientSerial(client));
 }
 
-public OnGetCreditsComplete(credits, any:serial)
+public void OnGetCreditsComplete(int credits, any serial)
 {
-	new client = GetClientFromSerial(serial);
+	int client = GetClientFromSerial(serial);
 	
 	if (client == 0)
 		return;
 		
-	new Handle:menu = CreateMenu(MainMenuSelectHandle);
+	Menu menu = CreateMenu(MainMenuSelectHandle);
 	SetMenuTitle(menu, "%T\n \n", "Store Menu Title", client, credits, g_currencyName);
 	
-	for (new item = 0; item < g_menuItemCount; item++)
+	for (int item = 0; item < g_menuItemCount; item++)
 	{
-		decl String:text[255];  
+		char text[255];  
 		Format(text, sizeof(text), "%T\n%T", g_menuItems[item].MenuItemDisplayName, client, g_menuItems[item].MenuItemDescription, client);
 				
 		AddMenuItem(menu, g_menuItems[item].MenuItemValue, text);
@@ -334,13 +335,13 @@ public OnGetCreditsComplete(credits, any:serial)
 	DisplayMenu(menu, client, 0);
 }
 
-public MainMenuSelectHandle(Handle:menu, MenuAction:action, client, slot)
+public int MainMenuSelectHandle(Menu menu, MenuAction action, int client, int slot)
 {
 	switch (action)
 	{
 		case MenuAction_Select:
 		{
-			Call_StartFunction(g_menuItems[slot].MenuItemPlugin, Function:g_menuItems[slot].MenuItemCallback);
+			Call_StartFunction(g_menuItems[slot].MenuItemPlugin, g_menuItems[slot].MenuItemCallback);
 			Call_PushCell(client);
 			Call_PushString(g_menuItems[slot].MenuItemValue);
 			Call_Finish();
@@ -350,28 +351,33 @@ public MainMenuSelectHandle(Handle:menu, MenuAction:action, client, slot)
 			CloseHandle(menu);
 		}
 	}
+
+	return 0;
 }
 
-public Native_OpenMainMenu(Handle:plugin, params)
+public int Native_OpenMainMenu(Handle plugin, int params)
 {       
 	OpenMainMenu(GetNativeCell(1));
+	return 0;
 }
 
-public Native_AddMainMenuItem(Handle:plugin, params)
+public int Native_AddMainMenuItem(Handle plugin, int params)
 {
-	decl String:displayName[32];
+	char displayName[32];
 	GetNativeString(1, displayName, sizeof(displayName));
 	
-	decl String:description[128];
+	char description[128];
 	GetNativeString(2, description, sizeof(description));
 	
-	decl String:value[64];
+	char value[64];
 	GetNativeString(3, value, sizeof(value));
 	
 	AddMainMenuItem(displayName, description, value, plugin, GetNativeFunction(4), GetNativeCell(5));
+	return 0;
 }
 
-public Native_GetCurrencyName(Handle:plugin, params)
+public int Native_GetCurrencyName(Handle plugin, int params)
 {       
 	SetNativeString(1, g_currencyName, GetNativeCell(2));
+	return 0;
 }
