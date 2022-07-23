@@ -18,7 +18,7 @@ typeset Store_MenuItemClickCallback
  *
  * @noreturn
  */
-native Store_OpenMainMenu(client);
+native void Store_OpenMainMenu(int client);
 
 /**
  * Adds an item to the main menu. 
@@ -31,7 +31,7 @@ native Store_OpenMainMenu(client);
  *
  * @noreturn
  */
-native Store_AddMainMenuItem(const String:displayName[], const String:description[] = "", const String:value[] = "", Store_MenuItemClickCallback:callback, order = 32);
+native void Store_AddMainMenuItem(const char[] displayName, const char[] description = "", const char[] value = "", Store_MenuItemClickCallback callback = INVALID_FUNCTION, int order = 32);
 
 /**
  * Retrieve currency name as it is defined in the core condig file.
@@ -41,9 +41,9 @@ native Store_AddMainMenuItem(const String:displayName[], const String:descriptio
  *
  * @noreturn
  */
-native Store_GetCurrencyName(String:currencyName[], maxLength);
+native void Store_GetCurrencyName(char[] currencyName, int maxLength);
 
-public SharedPlugin:__pl_store =
+public SharedPlugin __pl_store =
 {
 	name = "store",
 	file = "store-core.smx",
@@ -55,7 +55,7 @@ public SharedPlugin:__pl_store =
 };
 
 #if defined REQUIRE_PLUGIN
-public __pl_store_SetNTVOptional()
+public void __pl_store_SetNTVOptional()
 {
 	MarkNativeAsOptional("Store_OpenMainMenu");
 	MarkNativeAsOptional("Store_AddMainMenuItem");
