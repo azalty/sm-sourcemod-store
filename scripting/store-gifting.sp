@@ -6,14 +6,13 @@
 #include <adminmenu>
 #include <store>
 #include <colors>
-#include <smartdm>
 
 #define MAX_CREDIT_CHOICES 100
 
-enum Present
+enum struct Present
 {
-	Present_Owner,
-	String:Present_Data[64]
+	int Present_Owner;
+	char Present_Data[64];
 }
 
 enum GiftAction
@@ -28,21 +27,21 @@ enum GiftType
 	GiftType_Item
 }
 
-enum GiftRequest
+enum struct GiftRequest
 {
-	bool:GiftRequestActive,
-	GiftRequestSender,
-	GiftType:GiftRequestType,
-	GiftRequestValue
+	bool GiftRequestActive;
+	int GiftRequestSender;
+	GiftType GiftRequestType;
+	int GiftRequestValue;
 }
 
 new String:g_currencyName[64];
 new String:g_menuCommands[32][32];
 
 new g_creditChoices[MAX_CREDIT_CHOICES];
-new g_giftRequests[MAXPLAYERS+1][GiftRequest];
+GiftRequest g_giftRequests[MAXPLAYERS+1];
 
-new g_spawnedPresents[2048][Present];
+Present g_spawnedPresents[2048];
 new String:g_itemModel[32];
 new String:g_creditsModel[32];
 new bool:g_drop_enabled;
@@ -52,10 +51,10 @@ new String:g_game[32];
 public Plugin:myinfo =
 {
 	name        = "[Store] Gifting",
-	author      = "alongub",
+	author      = "alongub, drixevel",
 	description = "Gifting component for [Store]",
 	version     = STORE_VERSION,
-	url         = "https://github.com/alongubkin/store"
+	url         = "https://github.com/drixevel-dev/store"
 };
 
 /**
@@ -162,12 +161,12 @@ public OnMapStart()
 	if(g_drop_enabled) // false if the files are not found
 	{
 		PrecacheModel(g_itemModel, true);
-		Downloader_AddFileToDownloadsTable(g_itemModel);
+		AddFileToDownloadsTable(g_itemModel);
 
 		if (!StrEqual(g_itemModel, g_creditsModel))
 		{
 			PrecacheModel(g_creditsModel, true);
-			Downloader_AddFileToDownloadsTable(g_creditsModel);
+			AddFileToDownloadsTable(g_creditsModel);
 		}
 	}
 }
@@ -234,8 +233,8 @@ public DropGiveCreditsCallback(accountId, any:pack)
 	new present;
 	if((present = SpawnPresent(client, g_creditsModel)) != -1)
 	{
-		strcopy(g_spawnedPresents[present][Present_Data], 64, value);
-		g_spawnedPresents[present][Present_Owner] = client;
+		strcopy(g_spawnedPresents[present].Present_Data, 64, value);
+		g_spawnedPresents[present].Present_Owner = client;
 	}
 }
 
@@ -246,7 +245,7 @@ public OnMainMenuGiftClick(client, const String:value[])
 
 public Action:Event_PlayerDisconnect(Handle:event, const String:name[], bool:dontBroadcast) 
 { 
-	g_giftRequests[GetClientOfUserId(GetEventInt(event, "userid"))][GiftRequestActive] = false;
+	g_giftRequests[GetClientOfUserId(GetEventInt(event, "userid"))].GiftRequestActive = false;
 }
 
 /**
@@ -799,8 +798,8 @@ public ItemConfirmMenuSelectItem(Handle:menu, MenuAction:action, client, slot)
 						decl String:data[32];
 						Format(data, sizeof(data), "item,%d", itemId);
 
-						strcopy(g_spawnedPresents[present][Present_Data], 64, data);
-						g_spawnedPresents[present][Present_Owner] = client;
+						strcopy(g_spawnedPresents[present].Present_Data, 64, data);
+						g_spawnedPresents[present].Present_Owner = client;
 
 						Store_RemoveUserItem(GetSteamAccountID(client), itemId, DropItemCallback, client);
 					}
@@ -859,23 +858,23 @@ AskForPermission(client, giftTo, GiftType:giftType, value)
 
 	CPrintToChatEx(giftTo, client, "%s%T", STORE_PREFIX, "Gift Request Accept", client, clientName, what);
 
-	g_giftRequests[giftTo][GiftRequestActive] = true;
-	g_giftRequests[giftTo][GiftRequestSender] = client;
-	g_giftRequests[giftTo][GiftRequestType] = giftType;
-	g_giftRequests[giftTo][GiftRequestValue] = value;
+	g_giftRequests[giftTo].GiftRequestActive = true;
+	g_giftRequests[giftTo].GiftRequestSender = client;
+	g_giftRequests[giftTo].GiftRequestType = giftType;
+	g_giftRequests[giftTo].GiftRequestValue = value;
 }
 
 public Action:Command_Accept(client, args)
 {
-	if (!g_giftRequests[client][GiftRequestActive])
+	if (!g_giftRequests[client].GiftRequestActive)
 		return Plugin_Continue;
 
-	if (g_giftRequests[client][GiftRequestType] == GiftType_Credits)
-		GiftCredits(g_giftRequests[client][GiftRequestSender], client, g_giftRequests[client][GiftRequestValue]);
+	if (g_giftRequests[client].GiftRequestType == GiftType_Credits)
+		GiftCredits(g_giftRequests[client].GiftRequestSender, client, g_giftRequests[client].GiftRequestValue);
 	else
-		GiftItem(g_giftRequests[client][GiftRequestSender], client, g_giftRequests[client][GiftRequestValue]);
+		GiftItem(g_giftRequests[client].GiftRequestSender, client, g_giftRequests[client].GiftRequestValue);
 
-	g_giftRequests[client][GiftRequestActive] = false;
+	g_giftRequests[client].GiftRequestActive = false;
 	return Plugin_Handled;
 }
 
@@ -891,7 +890,7 @@ GiftCredits(from, to, amount)
 
 public TakeCreditsCallback(accountId, any:pack)
 {
-	SetPackPosition(pack, 8);
+	SetPackPosition(pack, view_as<DataPackPos>(8));
 
 	new to = ReadPackCell(pack);
 	new amount = ReadPackCell(pack);
@@ -931,7 +930,7 @@ GiftItem(from, to, itemId)
 
 public RemoveUserItemCallback(accountId, itemId, any:pack)
 {
-	SetPackPosition(pack, 8);
+	SetPackPosition(pack, view_as<DataPackPos>(8));
 
 	new to = ReadPackCell(pack);
 
@@ -989,7 +988,7 @@ public OnStartTouch(present, client)
 	if(!(0<client<=MaxClients))
 		return;
 
-	if(g_spawnedPresents[present][Present_Owner] == client)
+	if(g_spawnedPresents[present].Present_Owner == client)
 		return;
 
 	new rotator = GetEntPropEnt(present, Prop_Send, "m_hEffectEntity");
@@ -999,7 +998,7 @@ public OnStartTouch(present, client)
 	AcceptEntityInput(present, "Kill");
 
 	decl String:values[2][16];
-	ExplodeString(g_spawnedPresents[present][Present_Data], ",", values, sizeof(values), sizeof(values[]));
+	ExplodeString(g_spawnedPresents[present].Present_Data, ",", values, sizeof(values), sizeof(values[]));
 
 	new Handle:pack = CreateDataPack();
 	WritePackCell(pack, client);

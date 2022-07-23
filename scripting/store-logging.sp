@@ -30,10 +30,10 @@ public APLRes:AskPluginLoad2(Handle:myself, bool:late, String:error[], err_max)
 public Plugin:myinfo =
 {
 	name        = "[Store] Logging",
-	author      = "alongub",
+	author      = "alongub, drixevel",
 	description = "Logging component for [Store]",
 	version     = STORE_VERSION,
-	url         = "https://github.com/alongubkin/store"
+	url         = "https://github.com/drixevel-dev/store"
 };
 
 public OnPluginStart() 

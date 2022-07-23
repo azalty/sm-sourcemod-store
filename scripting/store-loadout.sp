@@ -45,10 +45,10 @@ public APLRes:AskPluginLoad2(Handle:myself, bool:late, String:error[], err_max)
 public Plugin:myinfo =
 {
 	name        = "[Store] Loadout",
-	author      = "alongub",
+	author      = "alongub, drixevel",
 	description = "Loadout component for [Store]",
 	version     = STORE_VERSION,
-	url         = "https://github.com/alongubkin/store"
+	url         = "https://github.com/drixevel-dev/store"
 };
 
 
@@ -84,7 +84,7 @@ public OnMapStart()
 {
 	if (g_databaseInitialized)
 	{
-		Store_GetLoadouts(INVALID_HANDLE, Store_GetItemsCallback:INVALID_HANDLE, false);
+		Store_GetLoadouts(INVALID_HANDLE, INVALID_FUNCTION, false);
 	}
 }
 
@@ -94,7 +94,7 @@ public OnMapStart()
 public Store_OnDatabaseInitialized()
 {
 	g_databaseInitialized = true;
-	Store_GetLoadouts(INVALID_HANDLE, Store_GetItemsCallback:INVALID_HANDLE, false);
+	Store_GetLoadouts(INVALID_HANDLE, INVALID_FUNCTION, false);
 }
 
 /**
