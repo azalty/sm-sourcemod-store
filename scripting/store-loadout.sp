@@ -9,9 +9,6 @@
 #undef REQUIRE_EXTENSIONS
 #include <tf2_stocks>
 
-char TF2_ClassName[TFClassType][] = {"", "scout", "sniper", "soldier", "demoman", "medic",
-                                                    "heavy", "pyro", "spy", "engineer" };
-
 Handle g_clientLoadoutChangedForward;
 char g_menuCommands[32][32];
 
@@ -22,7 +19,7 @@ char g_game[STORE_MAX_LOADOUTGAME_LENGTH];
 int g_clientLoadout[MAXPLAYERS+1];
 Handle g_lastClientLoadout;
 
-bool g_databaseInitialized = false;
+bool g_databaseInitialized;
 
 /**
  * Called before plugin is loaded.
@@ -114,23 +111,23 @@ public void OnClientCookiesCached(int client)
  */
 void LoadConfig() 
 {
-	KeyValues kv = CreateKeyValues("root");
+	KeyValues kv = new KeyValues("root");
 	
 	char path[PLATFORM_MAX_PATH];
 	BuildPath(Path_SM, path, sizeof(path), "configs/store/loadout.cfg");
 	
-	if (!FileToKeyValues(kv, path)) 
+	if (!kv.ImportFromFile(path)) 
 	{
-		CloseHandle(kv);
+		delete kv;
 		SetFailState("Can't read config file %s", path);
 	}
 
 	char menuCommands[255];
-	KvGetString(kv, "loadout_commands", menuCommands, sizeof(menuCommands));
+	kv.GetString("loadout_commands", menuCommands, sizeof(menuCommands));
 
 	g_iMenuCommandCount = ExplodeString(menuCommands, " ", g_menuCommands, sizeof(g_menuCommands), sizeof(g_menuCommands[]));
 	
-	CloseHandle(kv);
+	delete kv;
 }
 
 /**
@@ -181,6 +178,7 @@ public void OnMainMenuLoadoutClick(int client, const char[] value)
 public void Event_PlayerSpawn(Event event, const char[] name, bool dontBroadcast)
 {
 	int client = GetClientOfUserId(event.GetInt("userid"));
+	
 	if (g_clientLoadout[client] == 0 || !IsLoadoutAvailableFor(client, g_clientLoadout[client]))
 		FindOptimalLoadoutFor(client);
 }
@@ -194,16 +192,16 @@ public void Event_PlayerSpawn(Event event, const char[] name, bool dontBroadcast
  */
 void OpenLoadoutMenu(int client)
 {
-	Handle filter = CreateTrie();
-	SetTrieString(filter, "game", g_game);
-	SetTrieValue(filter, "team", GetClientTeam(client));
+	StringMap filter = new StringMap();
+	filter.SetString("game", g_game);
+	filter.SetValue("team", GetClientTeam(client));
 	
 	if (StrEqual(g_game, "tf"))
 	{
 		char className[10];
 		TF2_GetClassName(TF2_GetPlayerClass(client), className, sizeof(className));
 		
-		SetTrieString(filter, "class", className);
+		filter.SetString("class", className);
 	}
 	
 	Store_GetLoadouts(filter, GetLoadoutsCallback, true, client);
@@ -211,8 +209,8 @@ void OpenLoadoutMenu(int client)
 
 public void GetLoadoutsCallback(int[] ids, int count, any client)
 {
-	Handle menu = CreateMenu(LoadoutMenuSelectHandle);
-	SetMenuTitle(menu, "Loadout\n \n");
+	Menu menu = new Menu(LoadoutMenuSelectHandle);
+	menu.SetTitle("Loadout\n \n");
 		
 	for (int loadout = 0; loadout < count; loadout++)
 	{
@@ -229,41 +227,40 @@ public void GetLoadoutsCallback(int[] ids, int count, any client)
 		char itemValue[8];
 		IntToString(ids[loadout], itemValue, sizeof(itemValue));
 		
-		AddMenuItem(menu, itemValue, itemText);
+		menu.AddItem(itemValue, itemText);
 	}
 	
-	SetMenuExitBackButton(menu, true);
-	DisplayMenu(menu, client, 0);
+	menu.ExitBackButton = true;
+	menu.Display(client, MENU_TIME_FOREVER);
 }
 
 public int LoadoutMenuSelectHandle(Menu menu, MenuAction action, int client, int slot)
 {
-	if (action == MenuAction_Select)
-	{
-		char loadoutId[12];
-		
-		if (GetMenuItem(menu, slot, loadoutId, sizeof(loadoutId)))
-		{
-			g_clientLoadout[client] = StringToInt(loadoutId);			
-			SetClientCookie(client, g_lastClientLoadout, loadoutId);
+	switch (action) {
+		case MenuAction_Select: {
+			char loadoutId[12];
 			
-			Call_StartForward(g_clientLoadoutChangedForward);
-			Call_PushCell(client);
-			Call_Finish();
+			if (GetMenuItem(menu, slot, loadoutId, sizeof(loadoutId)))
+			{
+				g_clientLoadout[client] = StringToInt(loadoutId);			
+				SetClientCookie(client, g_lastClientLoadout, loadoutId);
+				
+				Call_StartForward(g_clientLoadoutChangedForward);
+				Call_PushCell(client);
+				Call_Finish();
+			}
+			
+			OpenLoadoutMenu(client);
 		}
-		
-		OpenLoadoutMenu(client);
-	}
-	else if (action == MenuAction_Cancel)
-	{
-		if (slot == MenuCancel_ExitBack)
-		{
-			Store_OpenMainMenu(client);
+		case MenuAction_Cancel: {
+			if (slot == MenuCancel_ExitBack)
+			{
+				Store_OpenMainMenu(client);
+			}
+		}		
+		case MenuAction_End: {
+			delete menu;
 		}
-	}		
-	else if (action == MenuAction_End)
-	{
-		CloseHandle(menu);
 	}
 
 	return 0;
@@ -290,6 +287,7 @@ bool IsLoadoutAvailableFor(int client, int loadout)
 	}
 	
 	int loadoutTeam = Store_GetLoadoutTeam(loadout);
+
 	if (loadoutTeam != -1 && GetClientTeam(client) != loadoutTeam)
 		return false;
 		
@@ -301,16 +299,16 @@ void FindOptimalLoadoutFor(int client)
 	if (!g_databaseInitialized)
 		return;
 		
-	Handle filter = CreateTrie();
-	SetTrieString(filter, "game", g_game);
-	SetTrieValue(filter, "team", GetClientTeam(client));
+	StringMap filter = new StringMap();
+	filter.SetString("game", g_game);
+	filter.SetValue("team", GetClientTeam(client));
 	
 	if (StrEqual(g_game, "tf"))
 	{
 		char className[10];
 		TF2_GetClassName(TF2_GetPlayerClass(client), className, sizeof(className));
 		
-		SetTrieString(filter, "class", className);
+		filter.SetString("class", className);
 	}
 	
 	Store_GetLoadouts(filter, FindOptimalLoadoutCallback, true, GetClientSerial(client));
@@ -342,18 +340,21 @@ public void FindOptimalLoadoutCallback(int[] ids, int count, any serial)
 	}	
 }
 
-public int Native_OpenLoadoutMenu(Handle plugin, int params)
+public int Native_OpenLoadoutMenu(Handle plugin, int numParams)
 {       
 	OpenLoadoutMenu(GetNativeCell(1));
 	return 0;
 }
 
-public int Native_GetClientLoadout(Handle plugin, int params)
+public int Native_GetClientLoadout(Handle plugin, int numParams)
 {       
 	return g_clientLoadout[GetNativeCell(1)];
 }
 
 void TF2_GetClassName(TFClassType classType, char[] buffer, int maxlength)
 {
+	char TF2_ClassName[TFClassType][] = {"", "scout", "sniper", "soldier", "demoman", "medic",
+														"heavy", "pyro", "spy", "engineer" };
+														
 	strcopy(buffer, maxlength, TF2_ClassName[classType]);
 }

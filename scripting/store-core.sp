@@ -8,7 +8,7 @@
 
 #include <colors>
 
-#define MAX_MENU_ITEMS	32
+#define MAX_MENU_ITEMS 32
 
 enum struct MenuItem
 {
@@ -27,11 +27,11 @@ char g_creditsCommand[32];
 int g_iMenuCommandCount;
 
 MenuItem g_menuItems[MAX_MENU_ITEMS + 1];
-int g_menuItemCount = 0;
+int g_menuItemCount;
 
-int g_firstConnectionCredits = 0;
+int g_firstConnectionCredits;
 
-bool g_allPluginsLoaded = false;
+bool g_allPluginsLoaded;
 
 /**
  * Called before plugin is loaded.
@@ -162,13 +162,8 @@ public Action Command_GiveCredits(int client, int args)
 		ReplyToCommand(client, "%sUsage: store_givecredits <name> <credits>", STORE_PREFIX);
 		return Plugin_Handled;
 	}
-    
+
 	char target[65];
-	char target_name[MAX_TARGET_LENGTH];
-	int target_list[MAXPLAYERS];
-	int target_count;
-	bool tn_is_ml;
-    
 	GetCmdArg(1, target, sizeof(target));
     
 	char money[32];
@@ -176,20 +171,16 @@ public Action Command_GiveCredits(int client, int args)
     
 	int imoney = StringToInt(money);
  
-	if ((target_count = ProcessTargetString(
-			target,
-			0,
-			target_list,
-			MAXPLAYERS,
-			0,
-			target_name,
-			sizeof(target_name),
-			tn_is_ml)) <= 0)
+	int target_count;
+	int target_list[MAXPLAYERS];
+	char target_name[MAX_TARGET_LENGTH];
+	bool tn_is_ml;
+
+	if ((target_count = ProcessTargetString(target, 0, target_list, MAXPLAYERS, 0, target_name, sizeof(target_name), tn_is_ml)) <= 0)
 	{
 		ReplyToTargetError(client, target_count);
 		return Plugin_Handled;
 	}
-
 
 	int[] accountIds = new int[target_count];
 	int count = 0;
@@ -219,27 +210,27 @@ public void OnCommandGetCredits(int credits, any client)
  */
 void LoadConfig() 
 {
-	KeyValues kv = CreateKeyValues("root");
+	KeyValues kv = new KeyValues("root");
 	
 	char path[PLATFORM_MAX_PATH];
 	BuildPath(Path_SM, path, sizeof(path), "configs/store/core.cfg");
 	
-	if (!FileToKeyValues(kv, path)) 
+	if (!kv.ImportFromFile(path)) 
 	{
-		CloseHandle(kv);
+		delete kv;
 		SetFailState("Can't read config file %s", path);
 	}
 
 	char menuCommands[255];
-	KvGetString(kv, "mainmenu_commands", menuCommands, sizeof(menuCommands));
+	kv.GetString("mainmenu_commands", menuCommands, sizeof(menuCommands));
 	g_iMenuCommandCount = ExplodeString(menuCommands, " ", g_menuCommands, sizeof(g_menuCommands), sizeof(g_menuCommands[]));
 	
-	KvGetString(kv, "currency_name", g_currencyName, sizeof(g_currencyName));
-	KvGetString(kv, "credits_command", g_creditsCommand, sizeof(g_creditsCommand), "sm_credits");
+	kv.GetString("currency_name", g_currencyName, sizeof(g_currencyName));
+	kv.GetString("credits_command", g_creditsCommand, sizeof(g_creditsCommand), "sm_credits");
 
-	g_firstConnectionCredits = KvGetNum(kv, "first_connection_credits");
+	g_firstConnectionCredits = kv.GetNum("first_connection_credits");
 
-	CloseHandle(kv);
+	delete kv;
 }
 
 /**
@@ -257,7 +248,6 @@ void LoadConfig()
 void AddMainMenuItem(const char[] displayName, const char[] description = "", const char[] value = "", Handle plugin = INVALID_HANDLE, Function callback = INVALID_FUNCTION, int order = 32)
 {
 	int item;
-	
 	for (; item <= g_menuItemCount; item++)
 	{
 		if (item == g_menuItemCount || StrEqual(g_menuItems[item].MenuItemDisplayName, displayName))
@@ -320,19 +310,19 @@ public void OnGetCreditsComplete(int credits, any serial)
 	if (client == 0)
 		return;
 		
-	Menu menu = CreateMenu(MainMenuSelectHandle);
-	SetMenuTitle(menu, "%T\n \n", "Store Menu Title", client, credits, g_currencyName);
+	Menu menu = new Menu(MainMenuSelectHandle);
+	menu.SetTitle("%T\n \n", "Store Menu Title", client, credits, g_currencyName);
 	
 	for (int item = 0; item < g_menuItemCount; item++)
 	{
 		char text[255];  
 		Format(text, sizeof(text), "%T\n%T", g_menuItems[item].MenuItemDisplayName, client, g_menuItems[item].MenuItemDescription, client);
 				
-		AddMenuItem(menu, g_menuItems[item].MenuItemValue, text);
+		menu.AddItem(g_menuItems[item].MenuItemValue, text);
 	}
 	
-	SetMenuExitButton(menu, true);
-	DisplayMenu(menu, client, 0);
+	menu.ExitBackButton = true;
+	menu.Display(client, MENU_TIME_FOREVER);
 }
 
 public int MainMenuSelectHandle(Menu menu, MenuAction action, int client, int slot)
@@ -348,7 +338,7 @@ public int MainMenuSelectHandle(Menu menu, MenuAction action, int client, int sl
 		}
 		case MenuAction_End:
 		{
-			CloseHandle(menu);
+			delete menu;
 		}
 	}
 

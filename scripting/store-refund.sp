@@ -54,25 +54,25 @@ public void OnConfigsExecuted()
  */
 void LoadConfig() 
 {
-	KeyValues kv = CreateKeyValues("root");
+	KeyValues kv = new KeyValues("root");
 	
 	char path[PLATFORM_MAX_PATH];
 	BuildPath(Path_SM, path, sizeof(path), "configs/store/refund.cfg");
 	
-	if (!FileToKeyValues(kv, path)) 
+	if (!kv.ImportFromFile(path)) 
 	{
-		CloseHandle(kv);
+		delete kv;
 		SetFailState("Can't read config file %s", path);
 	}
 
 	char menuCommands[255];
-	KvGetString(kv, "refund_commands", menuCommands, sizeof(menuCommands));
+	kv.GetString("refund_commands", menuCommands, sizeof(menuCommands));
 	ExplodeString(menuCommands, " ", g_menuCommands, sizeof(g_menuCommands), sizeof(g_menuCommands[]));
 	
-	g_refundPricePercentage = KvGetFloat(kv, "refund_price_percentage", 0.5);
-	g_confirmItemRefund = view_as<bool>(KvGetNum(kv, "confirm_item_refund", 1));
+	g_refundPricePercentage = kv.GetFloat("refund_price_percentage", 0.5);
+	g_confirmItemRefund = view_as<bool>(kv.GetNum("confirm_item_refund", 1));
 
-	CloseHandle(kv);
+	delete kv;
 }
 
 public void OnMainMenuRefundClick(int client, const char[] value)
@@ -139,8 +139,8 @@ public void GetCategoriesCallback(int[] ids, int count, any serial)
 	if (client == 0)
 		return;
 		
-	Menu menu = CreateMenu(RefundMenuSelectHandle);
-	SetMenuTitle(menu, "%T\n \n", "Refund", client);
+	Menu menu = new Menu(RefundMenuSelectHandle);
+	menu.SetTitle("%T\n \n", "Refund", client);
 	
 	for (int category = 0; category < count; category++)
 	{
@@ -162,32 +162,31 @@ public void GetCategoriesCallback(int[] ids, int count, any serial)
 		char itemValue[8];
 		IntToString(ids[category], itemValue, sizeof(itemValue));
 		
-		AddMenuItem(menu, itemValue, itemText);
+		menu.AddItem(itemValue, itemText);
 	}
 	
-	SetMenuExitBackButton(menu, true);
-	DisplayMenu(menu, client, 0);
+	menu.ExitBackButton = true;
+	menu.Display(client, MENU_TIME_FOREVER);
 }
 
 public int RefundMenuSelectHandle(Menu menu, MenuAction action, int client, int slot)
 {
-	if (action == MenuAction_Select)
-	{
-		char categoryIndex[64];
-		
-		if (GetMenuItem(menu, slot, categoryIndex, sizeof(categoryIndex)))
-			OpenRefundCategory(client, StringToInt(categoryIndex));
-	}
-	else if (action == MenuAction_Cancel)
-	{
-		if (slot == MenuCancel_ExitBack)
-		{
-			Store_OpenMainMenu(client);
+	switch (action) {
+		case MenuAction_Select: {
+			char categoryIndex[64];
+			
+			if (GetMenuItem(menu, slot, categoryIndex, sizeof(categoryIndex)))
+				OpenRefundCategory(client, StringToInt(categoryIndex));
 		}
-	}
-	else if (action == MenuAction_End)
-	{
-		CloseHandle(menu);
+		case MenuAction_Cancel: {
+			if (slot == MenuCancel_ExitBack)
+			{
+				Store_OpenMainMenu(client);
+			}
+		}
+		case MenuAction_End: {
+			delete menu;
+		}
 	}
 
 	return 0;
@@ -203,27 +202,27 @@ public int RefundMenuSelectHandle(Menu menu, MenuAction action, int client, int 
  */
 void OpenRefundCategory(int client, int categoryId, int slot = 0)
 {
-	DataPack pack = CreateDataPack();
-	WritePackCell(pack, GetClientSerial(client));
-	WritePackCell(pack, categoryId);
-	WritePackCell(pack, slot);
+	DataPack pack = new DataPack();
+	pack.WriteCell(GetClientSerial(client));
+	pack.WriteCell(categoryId);
+	pack.WriteCell(slot);
 
-	Handle filter = CreateTrie();
-	SetTrieValue(filter, "is_refundable", 1);
-	SetTrieValue(filter, "category_id", categoryId);
+	StringMap filter = new StringMap();
+	filter.SetValue("is_refundable", 1);
+	filter.SetValue("category_id", categoryId);
 
 	Store_GetUserItems(filter, GetSteamAccountID(client), Store_GetClientLoadout(client), GetUserItemsCallback, pack);
 }
 
 public void GetUserItemsCallback(int[] ids, bool[] equipped, int[] itemCount, int count, int loadoutId, DataPack pack)
 {	
-	ResetPack(pack);
+	pack.Reset();
 	
-	int serial = ReadPackCell(pack);
-	int categoryId = ReadPackCell(pack);
-	int slot = ReadPackCell(pack);
+	int serial = pack.ReadCell();
+	int categoryId = pack.ReadCell();
+	int slot = pack.ReadCell();
 	
-	CloseHandle(pack);
+	delete pack;
 	
 	int client = GetClientFromSerial(serial);
 	
@@ -241,8 +240,8 @@ public void GetUserItemsCallback(int[] ids, bool[] equipped, int[] itemCount, in
 	char categoryDisplayName[64];
 	Store_GetCategoryDisplayName(categoryId, categoryDisplayName, sizeof(categoryDisplayName));
 		
-	Menu menu = CreateMenu(RefundCategoryMenuSelectHandle);
-	SetMenuTitle(menu, "%T - %s\n \n", "Refund", client, categoryDisplayName);
+	Menu menu = new Menu(RefundCategoryMenuSelectHandle);
+	menu.SetTitle("%T - %s\n \n", "Refund", client, categoryDisplayName);
 	
 	for (int item = 0; item < count; item++)
 	{
@@ -261,41 +260,40 @@ public void GetUserItemsCallback(int[] ids, bool[] equipped, int[] itemCount, in
 		char value[8];
 		IntToString(ids[item], value, sizeof(value));
 		
-		AddMenuItem(menu, value, text);    
+		menu.AddItem(value, text);    
 	}
 
-	SetMenuExitBackButton(menu, true);
+	menu.ExitBackButton = true;
 	
 	if (slot == 0)
-		DisplayMenu(menu, client, 0);   
+		menu.Display(client, MENU_TIME_FOREVER);
 	else
-		DisplayMenuAtItem(menu, client, slot, 0); 
+		menu.DisplayAt(client, slot, MENU_TIME_FOREVER);
 }
 
 public int RefundCategoryMenuSelectHandle(Menu menu, MenuAction action, int client, int slot)
 {
-	if (action == MenuAction_Select)
-	{
-		char itemId[12];
-		if (GetMenuItem(menu, slot, itemId, sizeof(itemId)))
-		{
-			if (g_confirmItemRefund)
+	switch (action) {
+		case MenuAction_Select: {
+			char itemId[12];
+			if (GetMenuItem(menu, slot, itemId, sizeof(itemId)))
 			{
-				DisplayConfirmationMenu(client, StringToInt(itemId));
-			}
-			else
-			{			
-				Store_RemoveUserItem(GetSteamAccountID(client), StringToInt(itemId), OnRemoveUserItemComplete, GetClientSerial(client));
+				if (g_confirmItemRefund)
+				{
+					DisplayConfirmationMenu(client, StringToInt(itemId));
+				}
+				else
+				{			
+					Store_RemoveUserItem(GetSteamAccountID(client), StringToInt(itemId), OnRemoveUserItemComplete, GetClientSerial(client));
+				}
 			}
 		}
-	}
-	else if (action == MenuAction_Cancel)
-	{
-		OpenRefundMenu(client);
-	}
-	else if (action == MenuAction_End)
-	{
-		CloseHandle(menu);
+		case MenuAction_Cancel: {
+			OpenRefundMenu(client);
+		}
+		case MenuAction_End: {
+			delete menu;
+		}
 	}
 
 	return 0;
@@ -306,53 +304,51 @@ void DisplayConfirmationMenu(int client, int itemId)
 	char displayName[64];
 	Store_GetItemDisplayName(itemId, displayName, sizeof(displayName));
 
-	Menu menu = CreateMenu(ConfirmationMenuSelectHandle);
-	SetMenuTitle(menu, "%T", "Item Refund Confirmation", client, displayName, RoundToZero(Store_GetItemPrice(itemId) * g_refundPricePercentage), g_currencyName);
+	Menu menu = new Menu(ConfirmationMenuSelectHandle);
+	menu.SetTitle("%T", "Item Refund Confirmation", client, displayName, RoundToZero(Store_GetItemPrice(itemId) * g_refundPricePercentage), g_currencyName);
 
 	char value[8];
 	IntToString(itemId, value, sizeof(value));
 
-	AddMenuItem(menu, value, "Yes");
-	AddMenuItem(menu, "no", "No");
+	menu.AddItem(value, "Yes");
+	menu.AddItem("no", "No");
 
-	SetMenuExitButton(menu, false);
-	DisplayMenu(menu, client, 0);  
+	menu.ExitButton = false;
+	menu.Display(client, MENU_TIME_FOREVER);
 }
 
 public int ConfirmationMenuSelectHandle(Menu menu, MenuAction action, int client, int slot)
 {
-	if (action == MenuAction_Select)
-	{
-		char itemId[12];
-		if (GetMenuItem(menu, slot, itemId, sizeof(itemId)))
-		{
-			if (StrEqual(itemId, "no"))
+	switch (action) {
+		case MenuAction_Select: {
+			char itemId[12];
+			if (GetMenuItem(menu, slot, itemId, sizeof(itemId)))
 			{
-				OpenRefundMenu(client);
-			}
-			else
-			{
-				Store_RemoveUserItem(GetSteamAccountID(client), StringToInt(itemId), OnRemoveUserItemComplete, GetClientSerial(client));
+				if (StrEqual(itemId, "no"))
+				{
+					OpenRefundMenu(client);
+				}
+				else
+				{
+					Store_RemoveUserItem(GetSteamAccountID(client), StringToInt(itemId), OnRemoveUserItemComplete, GetClientSerial(client));
+				}
 			}
 		}
-	}
-	else if (action == MenuAction_Cancel)
-	{
-		OpenRefundMenu(client);
-	}
-	else if (action == MenuAction_DisplayItem) 
-	{
-		char display[64];
-		GetMenuItem(menu, slot, "", 0, _, display, sizeof(display));
+		case MenuAction_Cancel: {
+			OpenRefundMenu(client);
+		}
+		case MenuAction_DisplayItem:  {
+			char display[64];
+			GetMenuItem(menu, slot, "", 0, _, display, sizeof(display));
 
-		char buffer[255];
-		Format(buffer, sizeof(buffer), "%T", display, client);
+			char buffer[255];
+			Format(buffer, sizeof(buffer), "%T", display, client);
 
-		return RedrawMenuItem(buffer);
-	}
-	else if (action == MenuAction_End)
-	{
-		CloseHandle(menu);
+			return RedrawMenuItem(buffer);
+		}
+		case MenuAction_End: {
+			delete menu;
+		}
 	}
 
 	return 0;
@@ -367,25 +363,26 @@ public void OnRemoveUserItemComplete(int accountId, int itemId, any serial)
 
 	int credits = RoundToZero(Store_GetItemPrice(itemId) * g_refundPricePercentage);
 
-	DataPack pack = CreateDataPack();
-	WritePackCell(pack, GetClientSerial(client));
-	WritePackCell(pack, credits);
-	WritePackCell(pack, itemId);
+	DataPack pack = new DataPack();
+	pack.WriteCell(GetClientSerial(client));
+	pack.WriteCell(credits);
+	pack.WriteCell(itemId);
 
 	Store_GiveCredits(accountId, credits, OnGiveCreditsComplete, pack);
 }
 
 public void OnGiveCreditsComplete(int accountId, DataPack pack)
 {
-	ResetPack(pack);
+	pack.Reset();
 
-	int serial = ReadPackCell(pack);
-	int credits = ReadPackCell(pack);
-	int itemId = ReadPackCell(pack);
+	int serial = pack.ReadCell();
+	int credits = pack.ReadCell();
+	int itemId = pack.ReadCell();
 
-	CloseHandle(pack);
+	delete pack;
 
 	int client = GetClientFromSerial(serial);
+
 	if (client == 0)
 		return;
 

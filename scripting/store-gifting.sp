@@ -98,36 +98,36 @@ public void OnConfigsExecuted()
  */
 void LoadConfig() 
 {
-	KeyValues kv = CreateKeyValues("root");
+	KeyValues kv = new KeyValues("root");
 	
 	char path[PLATFORM_MAX_PATH];
 	BuildPath(Path_SM, path, sizeof(path), "configs/store/gifting.cfg");
 	
-	if (!FileToKeyValues(kv, path)) 
+	if (!kv.ImportFromFile(path)) 
 	{
-		CloseHandle(kv);
+		delete kv;
 		SetFailState("Can't read config file %s", path);
 	}
 
 	char menuCommands[255];
-	KvGetString(kv, "gifting_commands", menuCommands, sizeof(menuCommands));
+	kv.GetString("gifting_commands", menuCommands, sizeof(menuCommands));
 	ExplodeString(menuCommands, " ", g_menuCommands, sizeof(g_menuCommands), sizeof(g_menuCommands[]));
 	
 	char creditChoices[MAX_CREDIT_CHOICES][10];
 
 	char creditChoicesString[255];
-	KvGetString(kv, "credits_choices", creditChoicesString, sizeof(creditChoicesString));
+	kv.GetString("credits_choices", creditChoicesString, sizeof(creditChoicesString));
 
 	int choices = ExplodeString(creditChoicesString, " ", creditChoices, sizeof(creditChoices), sizeof(creditChoices[]));
 	for (int choice = 0; choice < choices; choice++)
 		g_creditChoices[choice] = StringToInt(creditChoices[choice]);
 
-	g_drop_enabled = view_as<bool>(KvGetNum(kv, "drop_enabled", 0));
+	g_drop_enabled = view_as<bool>(kv.GetNum("drop_enabled", 0));
 
 	if (g_drop_enabled)
 	{
-		KvGetString(kv, "itemModel", g_itemModel, sizeof(g_itemModel), "");
-		KvGetString(kv, "creditsModel", g_creditsModel, sizeof(g_creditsModel), "");
+		kv.GetString("itemModel", g_itemModel, sizeof(g_itemModel), "");
+		kv.GetString("creditsModel", g_creditsModel, sizeof(g_creditsModel), "");
 
 		if (!g_itemModel[0] || !FileExists(g_itemModel, true))
 		{
@@ -154,7 +154,7 @@ void LoadConfig()
 		}
 	}
 
-	CloseHandle(kv);
+	delete kv;
 }
 
 public void OnMapStart()
@@ -174,12 +174,10 @@ public void OnMapStart()
 
 public Action Command_Drop(int client, int args)
 {
-	if (args==0)
+	if (args == 0)
 	{
 		ReplyToCommand(client, "%sUsage: sm_drop <%s>", STORE_PREFIX, g_currencyName);
-		{
-			return Plugin_Handled;
-		}
+		return Plugin_Handled;
 	}
 
 	char sCredits[10];
@@ -190,14 +188,12 @@ public Action Command_Drop(int client, int args)
 	if (credits < 1)
 	{
 		ReplyToCommand(client, "%s%d is not a valid amount!", STORE_PREFIX, credits);
-		{
-			return Plugin_Handled;
-		}
+		return Plugin_Handled;
 	}
 
-	DataPack pack = CreateDataPack();
-	WritePackCell(pack, client);
-	WritePackCell(pack, credits);
+	DataPack pack = new DataPack();
+	pack.WriteCell(client);
+	pack.WriteCell(credits);
 
 	Store_GetCredits(GetSteamAccountID(client), DropGetCreditsCallback, pack);
 	return Plugin_Handled;
@@ -205,9 +201,9 @@ public Action Command_Drop(int client, int args)
 
 public void DropGetCreditsCallback(int credits, DataPack pack)
 {
-	ResetPack(pack);
-	int client = ReadPackCell(pack);
-	int needed = ReadPackCell(pack);
+	pack.Reset();
+	int client = pack.ReadCell();
+	int needed = pack.ReadCell();
 
 	if (credits >= needed)
 	{
@@ -221,10 +217,10 @@ public void DropGetCreditsCallback(int credits, DataPack pack)
 
 public void DropGiveCreditsCallback(int accountId, DataPack pack)
 {
-	ResetPack(pack);
-	int client = ReadPackCell(pack);
-	int credits = ReadPackCell(pack);
-	CloseHandle(pack);
+	pack.Reset();
+	int client = pack.ReadCell();
+	int credits = pack.ReadCell();
+	delete pack;
 
 	char value[32];
 	Format(value, sizeof(value), "credits,%d", credits);
@@ -299,60 +295,59 @@ public Action Command_OpenGifting(int client, int args)
  */
 void OpenGiftingMenu(int client)
 {
-	Menu menu = CreateMenu(GiftTypeMenuSelectHandle);
-	SetMenuTitle(menu, "%T", "Gift Type Menu Title", client);
+	Menu menu = new Menu(GiftTypeMenuSelectHandle);
+	menu.SetTitle("%T", "Gift Type Menu Title", client);
 
 	char item[32];
 	Format(item, sizeof(item), "%T", "Item", client);
 
-	AddMenuItem(menu, "credits", g_currencyName);
-	AddMenuItem(menu, "item", item);
+	menu.AddItem("credits", g_currencyName);
+	menu.AddItem("item", item);
 
-	DisplayMenu(menu, client, 0);
+	menu.Display(client, MENU_TIME_FOREVER);
 }
 
 public int GiftTypeMenuSelectHandle(Menu menu, MenuAction action, int client, int slot)
 {
-	if (action == MenuAction_Select)
-	{
-		char giftType[10];
-		
-		if (GetMenuItem(menu, slot, giftType, sizeof(giftType)))
-		{
-			if (StrEqual(giftType, "credits"))
+	switch (action) {
+		case MenuAction_Select: {
+			char giftType[10];
+			
+			if (menu.GetItem(slot, giftType, sizeof(giftType)))
 			{
-				if (g_drop_enabled)
+				if (StrEqual(giftType, "credits"))
 				{
-					OpenChooseActionMenu(client, GiftType_Credits);
+					if (g_drop_enabled)
+					{
+						OpenChooseActionMenu(client, GiftType_Credits);
+					}
+					else
+					{
+						OpenChoosePlayerMenu(client, GiftType_Credits);
+					}
 				}
-				else
+				else if (StrEqual(giftType, "item"))
 				{
-					OpenChoosePlayerMenu(client, GiftType_Credits);
-				}
-			}
-			else if (StrEqual(giftType, "item"))
-			{
-				if (g_drop_enabled)
-				{
-					OpenChooseActionMenu(client, GiftType_Item);
-				}
-				else
-				{
-					OpenChoosePlayerMenu(client, GiftType_Item);
+					if (g_drop_enabled)
+					{
+						OpenChooseActionMenu(client, GiftType_Item);
+					}
+					else
+					{
+						OpenChoosePlayerMenu(client, GiftType_Item);
+					}
 				}
 			}
 		}
-	}
-	else if (action == MenuAction_Cancel)
-	{
-		if (slot == MenuCancel_Exit)
-		{
-			Store_OpenMainMenu(client);
+		case MenuAction_Cancel: {
+			if (slot == MenuCancel_Exit)
+			{
+				Store_OpenMainMenu(client);
+			}
 		}
-	}
-	else if (action == MenuAction_End)
-	{
-		CloseHandle(menu);
+		case MenuAction_End:{
+			delete menu;
+		}
 	}
 
 	return 0;
@@ -360,8 +355,8 @@ public int GiftTypeMenuSelectHandle(Menu menu, MenuAction action, int client, in
 
 void OpenChooseActionMenu(int client, GiftType giftType)
 {
-	Menu menu = CreateMenu(ChooseActionMenuSelectHandle);
-	SetMenuTitle(menu, "%T", "Gift Delivery Method", client);
+	Menu menu = new Menu(ChooseActionMenuSelectHandle);
+	menu.SetTitle("%T", "Gift Delivery Method", client);
 
 	char s_giftType[32];
 	if (giftType == GiftType_Credits)
@@ -377,11 +372,11 @@ void OpenChooseActionMenu(int client, GiftType giftType)
 	Format(methodSend, sizeof(methodSend), "%T", "Gift Method Send", client);
 	Format(methodDrop, sizeof(methodDrop), "%T", "Gift Method Drop", client);
 
-	AddMenuItem(menu, send, methodSend);
-	AddMenuItem(menu, drop, methodDrop);
+	menu.AddItem(send, methodSend);
+	menu.AddItem(drop, methodDrop);
 
-	SetMenuExitBackButton(menu, true);
-	DisplayMenu(menu, client, 0);
+	menu.ExitBackButton = true;
+	menu.Display(client, MENU_TIME_FOREVER);
 }
 
 public int ChooseActionMenuSelectHandle(Menu menu, MenuAction action, int client, int slot)
@@ -391,7 +386,7 @@ public int ChooseActionMenuSelectHandle(Menu menu, MenuAction action, int client
 		case MenuAction_Select:
 		{
 			char values[32];
-			if (GetMenuItem(menu, slot, values, sizeof(values)))
+			if (menu.GetItem(slot, values, sizeof(values)))
 			{
 				char brokenValues[2][32];
 				ExplodeString(values, ",", brokenValues, sizeof(brokenValues), sizeof(brokenValues[]));
@@ -433,7 +428,7 @@ public int ChooseActionMenuSelectHandle(Menu menu, MenuAction action, int client
 		}
 		case MenuAction_End:
 		{
-			CloseHandle(menu);
+			delete menu;
 		}
 	}
 
@@ -445,38 +440,37 @@ void OpenChoosePlayerMenu(int client, GiftType giftType)
 	Menu menu;
 
 	if (giftType == GiftType_Credits)
-		menu = CreateMenu(ChoosePlayerCreditsMenuSelectHandle);
+		menu = new Menu(ChoosePlayerCreditsMenuSelectHandle);
 	else if (giftType == GiftType_Item)
-		menu = CreateMenu(ChoosePlayerItemMenuSelectHandle);
+		menu = new Menu(ChoosePlayerItemMenuSelectHandle);
 	else
 		return;
 
-	SetMenuTitle(menu, "Select Player:\n \n");
+	menu.SetTitle("Select Player:\n \n");
 
 	AddTargetsToMenu2(menu, 0, COMMAND_FILTER_NO_BOTS);
 
-	SetMenuExitBackButton(menu, true);
-	DisplayMenu(menu, client, MENU_TIME_FOREVER);	
+	menu.ExitBackButton = true;
+	menu.Display(client, MENU_TIME_FOREVER);	
 }
 
 public int ChoosePlayerCreditsMenuSelectHandle(Menu menu, MenuAction action, int client, int slot)
 {
-	if (action == MenuAction_Select)
-	{
-		char userid[10];
-		if (GetMenuItem(menu, slot, userid, sizeof(userid)))
-			OpenSelectCreditsMenu(client, GiftAction_Send, GetClientOfUserId(StringToInt(userid)));
-	}
-	else if (action == MenuAction_Cancel)
-	{
-		if (slot == MenuCancel_ExitBack)
-		{
-			OpenGiftingMenu(client);
+	switch (action) {
+		case MenuAction_Select: {
+			char userid[10];
+			if (menu.GetItem(slot, userid, sizeof(userid)))
+				OpenSelectCreditsMenu(client, GiftAction_Send, GetClientOfUserId(StringToInt(userid)));
 		}
-	}
-	else if (action == MenuAction_End)
-	{
-		CloseHandle(menu);
+		case MenuAction_Cancel: {
+			if (slot == MenuCancel_ExitBack)
+			{
+				OpenGiftingMenu(client);
+			}
+		}
+		case MenuAction_End: {
+			delete menu;
+		}
 	}
 
 	return 0;
@@ -484,22 +478,21 @@ public int ChoosePlayerCreditsMenuSelectHandle(Menu menu, MenuAction action, int
 
 public int ChoosePlayerItemMenuSelectHandle(Menu menu, MenuAction action, int client, int slot)
 {
-	if (action == MenuAction_Select)
-	{
-		char userid[10];
-		if (GetMenuItem(menu, slot, userid, sizeof(userid)))
-			OpenSelectItemMenu(client, GiftAction_Send, GetClientOfUserId(StringToInt(userid)));
-	}
-	else if (action == MenuAction_Cancel)
-	{
-		if (slot == MenuCancel_ExitBack)
-		{
-			OpenGiftingMenu(client);
+	switch (action) {
+		case MenuAction_Select:{
+			char userid[10];
+			if (menu.GetItem(slot, userid, sizeof(userid)))
+				OpenSelectItemMenu(client, GiftAction_Send, GetClientOfUserId(StringToInt(userid)));
 		}
-	}
-	else if (action == MenuAction_End)
-	{
-		CloseHandle(menu);
+		case MenuAction_Cancel: {
+			if (slot == MenuCancel_ExitBack)
+			{
+				OpenGiftingMenu(client);
+			}
+		}
+		case MenuAction_End: {
+			delete menu;
+		}
 	}
 
 	return 0;
@@ -510,9 +503,9 @@ void OpenSelectCreditsMenu(int client, GiftAction giftAction, int giftTo = -1)
 	if (giftAction == GiftAction_Send && giftTo == -1)
 		return;
 
-	Menu menu = CreateMenu(CreditsMenuSelectItem);
+	Menu menu = new Menu(CreditsMenuSelectItem);
 
-	SetMenuTitle(menu, "Select %s:", g_currencyName);
+	menu.SetTitle("Select %s:", g_currencyName);
 
 	for (int choice = 0; choice < sizeof(g_creditChoices); choice++)
 	{
@@ -525,46 +518,45 @@ void OpenSelectCreditsMenu(int client, GiftAction giftAction, int giftTo = -1)
 		char value[32];
 		Format(value, sizeof(value), "%d,%d,%d", giftAction, giftTo, g_creditChoices[choice]);
 
-		AddMenuItem(menu, value, text);
+		menu.AddItem(value, text);
 	}
 
-	SetMenuExitBackButton(menu, true);
-	DisplayMenu(menu, client, MENU_TIME_FOREVER);
+	menu.ExitBackButton = true;
+	menu.Display(client, MENU_TIME_FOREVER);
 }
 
 public int CreditsMenuSelectItem(Menu menu, MenuAction action, int client, int slot)
 {
-	if (action == MenuAction_Select)
-	{
-		char value[32];
-		if (GetMenuItem(menu, slot, value, sizeof(value)))
-		{
-			char values[3][16];
-			ExplodeString(value, ",", values, sizeof(values), sizeof(values[]));
+	switch (action) {
+		case MenuAction_Select: {
+			char value[32];
+			if (menu.GetItem(slot, value, sizeof(value)))
+			{
+				char values[3][16];
+				ExplodeString(value, ",", values, sizeof(values), sizeof(values[]));
 
-			int giftAction = StringToInt(values[0]);
-			int giftTo = StringToInt(values[1]);
-			int credits = StringToInt(values[2]);
+				int giftAction = StringToInt(values[0]);
+				int giftTo = StringToInt(values[1]);
+				int credits = StringToInt(values[2]);
 
-			DataPack pack = CreateDataPack();
-			WritePackCell(pack, client);
-			WritePackCell(pack, giftAction);
-			WritePackCell(pack, giftTo);
-			WritePackCell(pack, credits);
+				DataPack pack = new DataPack();
+				pack.WriteCell(client);
+				pack.WriteCell(giftAction);
+				pack.WriteCell(giftTo);
+				pack.WriteCell(credits);
 
-			Store_GetCredits(GetSteamAccountID(client), GetCreditsCallback, pack);
+				Store_GetCredits(GetSteamAccountID(client), GetCreditsCallback, pack);
+			}
 		}
-	}
-	else if (action == MenuAction_Cancel)
-	{
-		if (slot == MenuCancel_ExitBack)
-		{
-			OpenGiftingMenu(client);
+		case MenuAction_Cancel: {
+			if (slot == MenuCancel_ExitBack)
+			{
+				OpenGiftingMenu(client);
+			}
 		}
-	}
-	else if (action == MenuAction_End)
-	{
-		CloseHandle(menu);
+		case MenuAction_End: {
+			delete menu;
+		}
 	}
 
 	return 0;
@@ -572,14 +564,14 @@ public int CreditsMenuSelectItem(Menu menu, MenuAction action, int client, int s
 
 public void GetCreditsCallback(int credits, DataPack pack)
 {
-	ResetPack(pack);
+	pack.Reset();
 
-	int client = ReadPackCell(pack);
-	GiftAction giftAction = view_as<GiftAction>(ReadPackCell(pack));
-	int giftTo = ReadPackCell(pack);
-	int giftCredits = ReadPackCell(pack);
+	int client = pack.ReadCell();
+	GiftAction giftAction = view_as<GiftAction>(pack.ReadCell());
+	int giftTo = pack.ReadCell();
+	int giftCredits = pack.ReadCell();
 
-	CloseHandle(pack);
+	delete pack;
 
 	if (giftCredits > credits)
 	{
@@ -593,83 +585,81 @@ public void GetCreditsCallback(int credits, DataPack pack)
 
 void OpenGiveCreditsConfirmMenu(int client, GiftAction giftAction, int giftTo, int credits)
 {
-	Menu menu = CreateMenu(CreditsConfirmMenuSelectItem);
+	Menu menu = new Menu(CreditsConfirmMenuSelectItem);
 	char value[32];
 
 	if (giftAction == GiftAction_Send)
 	{
 		char name[32];
 		GetClientName(giftTo, name, sizeof(name));
-		SetMenuTitle(menu, "%T", "Gift Credit Confirmation", client, name, credits, g_currencyName);
+		menu.SetTitle("%T", "Gift Credit Confirmation", client, name, credits, g_currencyName);
 		Format(value, sizeof(value), "%d,%d,%d", giftAction, giftTo, credits);
 	}
 	else if (giftAction == GiftAction_Drop)
 	{
-		SetMenuTitle(menu, "%T", "Drop Credit Confirmation", client, credits, g_currencyName);
+		menu.SetTitle("%T", "Drop Credit Confirmation", client, credits, g_currencyName);
 		Format(value, sizeof(value), "%d,%d,%d", giftAction, giftTo, credits);
 	}
 
-	AddMenuItem(menu, value, "Yes");
-	AddMenuItem(menu, "", "No");
+	menu.AddItem(value, "Yes");
+	menu.AddItem("", "No");
 
-	SetMenuExitButton(menu, false);
-	DisplayMenu(menu, client, 0);  
+	menu.ExitBackButton = false;
+	menu.Display(client, MENU_TIME_FOREVER);  
 }
 
 public int CreditsConfirmMenuSelectItem(Menu menu, MenuAction action, int client, int slot)
 {
-	if (action == MenuAction_Select)
-	{
-		char value[32];
-		if (GetMenuItem(menu, slot, value, sizeof(value)))
-		{
-			if (!StrEqual(value, ""))
+	switch (action) {
+		case MenuAction_Select: {
+			char value[32];
+			if (menu.GetItem(slot, value, sizeof(value)))
 			{
-				char values[3][16];
-				ExplodeString(value, ",", values, sizeof(values), sizeof(values[]));
-
-				GiftAction giftAction = view_as<GiftAction>(StringToInt(values[0]));
-				int giftTo = StringToInt(values[1]);
-				int credits = StringToInt(values[2]);
-
-				if (giftAction == GiftAction_Send)
+				if (!StrEqual(value, ""))
 				{
-					AskForPermission(client, giftTo, GiftType_Credits, credits);
-				}
-				else if (giftAction == GiftAction_Drop)
-				{
-					char data[32];
-					Format(data, sizeof(data), "credits,%d", credits);
+					char values[3][16];
+					ExplodeString(value, ",", values, sizeof(values), sizeof(values[]));
 
-					DataPack pack = CreateDataPack();
-					WritePackCell(pack, client);
-					WritePackCell(pack, credits);
+					GiftAction giftAction = view_as<GiftAction>(StringToInt(values[0]));
+					int giftTo = StringToInt(values[1]);
+					int credits = StringToInt(values[2]);
 
-					Store_GetCredits(GetSteamAccountID(client), DropGetCreditsCallback, pack);
+					if (giftAction == GiftAction_Send)
+					{
+						AskForPermission(client, giftTo, GiftType_Credits, credits);
+					}
+					else if (giftAction == GiftAction_Drop)
+					{
+						char data[32];
+						Format(data, sizeof(data), "credits,%d", credits);
+
+						DataPack pack = new DataPack();
+						pack.WriteCell(client);
+						pack.WriteCell(credits);
+
+						Store_GetCredits(GetSteamAccountID(client), DropGetCreditsCallback, pack);
+					}
 				}
 			}
 		}
-	}
-	else if (action == MenuAction_DisplayItem) 
-	{
-		char display[64];
-		GetMenuItem(menu, slot, "", 0, _, display, sizeof(display));
+		case MenuAction_DisplayItem: {
+			char display[64];
+			menu.GetItem(slot, "", 0, _, display, sizeof(display));
 
-		char buffer[255];
-		Format(buffer, sizeof(buffer), "%T", display, client);
+			char buffer[255];
+			Format(buffer, sizeof(buffer), "%T", display, client);
 
-		return RedrawMenuItem(buffer);
-	}	
-	else if (action == MenuAction_Cancel)
-	{
-		if (slot == MenuCancel_ExitBack)
-		{
-			OpenChoosePlayerMenu(client, GiftType_Credits);
+			return RedrawMenuItem(buffer);
+		}	
+		case MenuAction_Cancel: {
+			if (slot == MenuCancel_ExitBack)
+			{
+				OpenChoosePlayerMenu(client, GiftType_Credits);
+			}
 		}
-	}
-	else if (action == MenuAction_End)
-	{
-		CloseHandle(menu);
+		case MenuAction_End: {
+			delete menu;
+		}
 	}
 
 	return 0;
@@ -677,26 +667,26 @@ public int CreditsConfirmMenuSelectItem(Menu menu, MenuAction action, int client
 
 void OpenSelectItemMenu(int client, GiftAction giftAction, int giftTo = -1)
 {
-	DataPack pack = CreateDataPack();
-	WritePackCell(pack, GetClientSerial(client));
-	WritePackCell(pack, giftAction);
-	WritePackCell(pack, giftTo);
+	DataPack pack = new DataPack();
+	pack.WriteCell(GetClientSerial(client));
+	pack.WriteCell(giftAction);
+	pack.WriteCell(giftTo);
 
-	Handle filter = CreateTrie();
-	SetTrieValue(filter, "is_tradeable", 1);
+	StringMap filter = new StringMap();
+	filter.SetValue("is_tradeable", 1);
 
 	Store_GetUserItems(filter, GetSteamAccountID(client), Store_GetClientLoadout(client), GetUserItemsCallback, pack);
 }
 
 public void GetUserItemsCallback(int[] ids, bool[] equipped, int[] itemCount, int count, int loadoutId, DataPack pack)
 {		
-	ResetPack(pack);
+	pack.Reset();
 	
-	int serial = ReadPackCell(pack);
-	GiftAction giftAction = view_as<GiftAction>(ReadPackCell(pack));
-	int giftTo = ReadPackCell(pack);
+	int serial = pack.ReadCell();
+	GiftAction giftAction = view_as<GiftAction>(pack.ReadCell());
+	int giftTo = pack.ReadCell();
 	
-	CloseHandle(pack);
+	delete pack;
 	
 	int client = GetClientFromSerial(serial);
 	
@@ -709,8 +699,8 @@ public void GetUserItemsCallback(int[] ids, bool[] equipped, int[] itemCount, in
 		return;
 	}
 	
-	Menu menu = CreateMenu(ItemMenuSelectHandle);
-	SetMenuTitle(menu, "Select item:\n \n");
+	Menu menu = new Menu(ItemMenuSelectHandle);
+	menu.SetTitle("Select item:\n \n");
 	
 	for (int item = 0; item < count; item++)
 	{
@@ -726,30 +716,29 @@ public void GetUserItemsCallback(int[] ids, bool[] equipped, int[] itemCount, in
 		char value[32];
 		Format(value, sizeof(value), "%d,%d,%d", giftAction, giftTo, ids[item]);
 		
-		AddMenuItem(menu, value, text);    
+		menu.AddItem(value, text);    
 	}
 
-	SetMenuExitBackButton(menu, true);
-	DisplayMenu(menu, client, 0);
+	menu.ExitBackButton = true;
+	menu.Display(client, MENU_TIME_FOREVER);
 }
 
 public int ItemMenuSelectHandle(Menu menu, MenuAction action, int client, int slot)
 {
-	if (action == MenuAction_Select)
-	{
-		char value[32];
-		if (GetMenuItem(menu, slot, value, sizeof(value)))
-		{
-			OpenGiveItemConfirmMenu(client, value);
+	switch (action) {
+		case MenuAction_Select: {
+			char value[32];
+			if (menu.GetItem(slot, value, sizeof(value)))
+			{
+				OpenGiveItemConfirmMenu(client, value);
+			}
 		}
-	}
-	else if (action == MenuAction_Cancel)
-	{
-		OpenGiftingMenu(client); //OpenChoosePlayerMenu(client, GiftType_Item);
-	}
-	else if (action == MenuAction_End)
-	{
-		CloseHandle(menu);
+		case MenuAction_Cancel: {
+			OpenGiftingMenu(client); //OpenChoosePlayerMenu(client, GiftType_Item);
+		}
+		case MenuAction_End: {
+			delete menu;
+		}
 	}
 
 	return 0;
@@ -773,77 +762,75 @@ void OpenGiveItemConfirmMenu(int client, const char[] value)
 	char displayName[STORE_MAX_DISPLAY_NAME_LENGTH];
 	Store_GetItemDisplayName(itemId, displayName, sizeof(displayName));
 
-	Menu menu = CreateMenu(ItemConfirmMenuSelectItem);
+	Menu menu = new Menu(ItemConfirmMenuSelectItem);
 	if (giftAction == GiftAction_Send)
-		SetMenuTitle(menu, "%T", "Gift Item Confirmation", client, name, displayName);
+		menu.SetTitle("%T", "Gift Item Confirmation", client, name, displayName);
 	else if (giftAction == GiftAction_Drop)
-		SetMenuTitle(menu, "%T", "Drop Item Confirmation", client, displayName);
+		menu.SetTitle("%T", "Drop Item Confirmation", client, displayName);
 
-	AddMenuItem(menu, value, "Yes");
-	AddMenuItem(menu, "", "No");
+	menu.AddItem(value, "Yes");
+	menu.AddItem("", "No");
 
-	SetMenuExitButton(menu, false);
-	DisplayMenu(menu, client, 0);
+	menu.ExitButton = false;
+	menu.Display(client, MENU_TIME_FOREVER);
 }
 
 public int ItemConfirmMenuSelectItem(Menu menu, MenuAction action, int client, int slot)
 {
-	if (action == MenuAction_Select)
-	{
-		char value[32];
-		if (GetMenuItem(menu, slot, value, sizeof(value)))
-		{
-			if (!StrEqual(value, ""))
+	switch (action) {
+		case MenuAction_Select: {
+			char value[32];
+			if (menu.GetItem(slot, value, sizeof(value)))
 			{
-				char values[3][16];
-				ExplodeString(value, ",", values, sizeof(values), sizeof(values[]));
-
-				GiftAction giftAction = view_as<GiftAction>(StringToInt(values[0]));
-				int giftTo = StringToInt(values[1]);
-				int itemId = StringToInt(values[2]);
-
-				if (giftAction == GiftAction_Send)
-					AskForPermission(client, giftTo, GiftType_Item, itemId);
-				else if (giftAction == GiftAction_Drop)
+				if (!StrEqual(value, ""))
 				{
-					int present;
-					if((present = SpawnPresent(client, g_itemModel)) != -1)
+					char values[3][16];
+					ExplodeString(value, ",", values, sizeof(values), sizeof(values[]));
+
+					GiftAction giftAction = view_as<GiftAction>(StringToInt(values[0]));
+					int giftTo = StringToInt(values[1]);
+					int itemId = StringToInt(values[2]);
+
+					if (giftAction == GiftAction_Send)
+						AskForPermission(client, giftTo, GiftType_Item, itemId);
+					else if (giftAction == GiftAction_Drop)
 					{
-						char data[32];
-						Format(data, sizeof(data), "item,%d", itemId);
+						int present;
+						if((present = SpawnPresent(client, g_itemModel)) != -1)
+						{
+							char data[32];
+							Format(data, sizeof(data), "item,%d", itemId);
 
-						strcopy(g_spawnedPresents[present].Present_Data, 64, data);
-						g_spawnedPresents[present].Present_Owner = client;
+							strcopy(g_spawnedPresents[present].Present_Data, 64, data);
+							g_spawnedPresents[present].Present_Owner = client;
 
-						Store_RemoveUserItem(GetSteamAccountID(client), itemId, DropItemCallback, client);
+							Store_RemoveUserItem(GetSteamAccountID(client), itemId, DropItemCallback, client);
+						}
 					}
 				}
 			}
 		}
-	}
-	else if (action == MenuAction_DisplayItem) 
-	{
-		char display[64];
-		GetMenuItem(menu, slot, "", 0, _, display, sizeof(display));
+		case MenuAction_DisplayItem: {
+			char display[64];
+			menu.GetItem(slot, "", 0, _, display, sizeof(display));
 
-		char buffer[255];
-		Format(buffer, sizeof(buffer), "%T", display, client);
+			char buffer[255];
+			Format(buffer, sizeof(buffer), "%T", display, client);
 
-		return RedrawMenuItem(buffer);
-	}	
-	else if (action == MenuAction_Cancel)
-	{
-		if (slot == MenuCancel_ExitBack)
-		{
-			OpenGiftingMenu(client);
+			return RedrawMenuItem(buffer);
+		}	
+		case MenuAction_Cancel: {
+			if (slot == MenuCancel_ExitBack)
+			{
+				OpenGiftingMenu(client);
+			}
+		}
+		case MenuAction_End: {
+			delete menu;
 		}
 	}
-	else if (action == MenuAction_End)
-	{
-		CloseHandle(menu);
-	}
 
-	return false;
+	return 0;
 }
 
 public void DropItemCallback(int accountId, int itemId, any client)
@@ -894,32 +881,32 @@ public Action Command_Accept(int client, int args)
 
 void GiftCredits(int from, int to, int amount)
 {
-	DataPack pack = CreateDataPack();
-	WritePackCell(pack, from); // 0
-	WritePackCell(pack, to); // 8
-	WritePackCell(pack, amount);
+	DataPack pack = new DataPack();
+	pack.WriteCell(from); // 0
+	pack.WriteCell(to); // 8
+	pack.WriteCell(amount);
 
 	Store_GiveCredits(GetSteamAccountID(from), -amount, TakeCreditsCallback, pack);
 }
 
 public void TakeCreditsCallback(int accountId, DataPack pack)
 {
-	SetPackPosition(pack, view_as<DataPackPos>(8));
+	pack.Position = view_as<DataPackPos>(8);
 
-	int to = ReadPackCell(pack);
-	int amount = ReadPackCell(pack);
+	int to = pack.ReadCell();
+	int amount = pack.ReadCell();
 
 	Store_GiveCredits(GetSteamAccountID(to), amount, GiveCreditsCallback, pack);
 }
 
 public void GiveCreditsCallback(int  accountId, DataPack pack)
 {
-	ResetPack(pack);
+	pack.Reset();
 
-	int from = ReadPackCell(pack);
-	int to = ReadPackCell(pack);
+	int from = pack.ReadCell();
+	int to = pack.ReadCell();
 
-	CloseHandle(pack);
+	delete pack;
 
 	char receiverName[32];
 	GetClientName(to, receiverName, sizeof(receiverName));	
@@ -934,19 +921,19 @@ public void GiveCreditsCallback(int  accountId, DataPack pack)
 
 void GiftItem(int from, int to, int itemId)
 {
-	DataPack pack = CreateDataPack();
-	WritePackCell(pack, from); // 0
-	WritePackCell(pack, to); // 8
-	WritePackCell(pack, itemId);
+	DataPack pack = new DataPack();
+	pack.WriteCell(from); // 0
+	pack.WriteCell(to); // 8
+	pack.WriteCell(itemId);
 
 	Store_RemoveUserItem(GetSteamAccountID(from), itemId, RemoveUserItemCallback, pack);
 }
 
 public void RemoveUserItemCallback(int accountId, int itemId, DataPack pack)
 {
-	SetPackPosition(pack, view_as<DataPackPos>(8));
+	pack.Position = view_as<DataPackPos>(8);
 
-	int to = ReadPackCell(pack);
+	int to = pack.ReadCell();
 
 	Store_GiveItem(GetSteamAccountID(to), itemId, Store_Gift, GiveCreditsCallback, pack);
 }
@@ -1015,30 +1002,34 @@ public void OnStartTouch(int present, int client)
 	char values[2][16];
 	ExplodeString(g_spawnedPresents[present].Present_Data, ",", values, sizeof(values), sizeof(values[]));
 
-	DataPack pack = CreateDataPack();
-	WritePackCell(pack, client);
-	WritePackString(pack,values[0]);
+	DataPack pack = new DataPack();
+	pack.WriteCell(client);
+	pack.WriteString(values[0]);
+
 	if (StrEqual(values[0],"credits"))
 	{
 		int credits = StringToInt(values[1]);
-		WritePackCell(pack, credits);
+		pack.WriteCell(credits);
 		Store_GiveCredits(GetSteamAccountID(client), credits, PickupGiveCallback, pack);
 	}
 	else if (StrEqual(values[0], "item"))
 	{
 		int itemId = StringToInt(values[1]);
-		WritePackCell(pack, itemId);
+		pack.WriteCell(itemId);
 		Store_GiveItem(GetSteamAccountID(client), itemId, Store_Gift, PickupGiveCallback, pack);
 	}
 }
 
 public void PickupGiveCallback(int accountId, DataPack pack)
 {
-	ResetPack(pack);
-	int client = ReadPackCell(pack);
+	pack.Reset();
+
+	int client = pack.ReadCell();
+
 	char itemType[32];
-	ReadPackString(pack, itemType, sizeof(itemType));
-	int value = ReadPackCell(pack);
+	pack.ReadString(itemType, sizeof(itemType));
+
+	int value = pack.ReadCell();
 
 	if (StrEqual(itemType, "credits"))
 	{

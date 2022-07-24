@@ -11,13 +11,13 @@
 char g_currencyName[64];
 char g_menuCommands[32][32];
 
-bool g_hideEmptyCategories = false;
+bool g_hideEmptyCategories;
+bool g_confirmItemPurchase;
+bool g_allowBuyingDuplicates;
 
-bool g_confirmItemPurchase = false;
+GlobalForward g_buyItemForward;
 
-bool g_allowBuyingDuplicates = false;
-
-Handle g_buyItemForward;
+Menu categories_menu[MAXPLAYERS+1];
 
 /**
  * Called before plugin is loaded.
@@ -54,7 +54,7 @@ public void OnPluginStart()
 {
 	LoadConfig();
 
-	g_buyItemForward = CreateGlobalForward("Store_OnBuyItem", ET_Event, Param_Cell, Param_Cell, Param_Cell);
+	g_buyItemForward = new GlobalForward("Store_OnBuyItem", ET_Ignore, Param_Cell, Param_Cell, Param_Cell);
 
 	LoadTranslations("common.phrases");
 	LoadTranslations("store.phrases");
@@ -78,30 +78,28 @@ public void OnConfigsExecuted()
 /**
  * Load plugin config.
  */
-void LoadConfig() 
+void LoadConfig()
 {
-	KeyValues kv = CreateKeyValues("root");
+	KeyValues kv = new KeyValues("root");
 	
 	char path[PLATFORM_MAX_PATH];
 	BuildPath(Path_SM, path, sizeof(path), "configs/store/shop.cfg");
 	
-	if (!FileToKeyValues(kv, path)) 
+	if (!kv.ImportFromFile(path)) 
 	{
-		CloseHandle(kv);
+		delete kv;
 		SetFailState("Can't read config file %s", path);
 	}
 
 	char menuCommands[255];
-	KvGetString(kv, "shop_commands", menuCommands, sizeof(menuCommands));
+	kv.GetString("shop_commands", menuCommands, sizeof(menuCommands));
 	ExplodeString(menuCommands, " ", g_menuCommands, sizeof(g_menuCommands), sizeof(g_menuCommands[]));
 	
-	g_confirmItemPurchase = view_as<bool>(KvGetNum(kv, "confirm_item_purchase", 0));
+	g_confirmItemPurchase = view_as<bool>(kv.GetNum("confirm_item_purchase", 0));
+	g_hideEmptyCategories = view_as<bool>(kv.GetNum("hide_empty_categories", 0));
+	g_allowBuyingDuplicates = view_as<bool>(kv.GetNum("allow_buying_duplicates", 0));
 
-	g_hideEmptyCategories = view_as<bool>(KvGetNum(kv, "hide_empty_categories", 0));
-
-	g_allowBuyingDuplicates = view_as<bool>(KvGetNum(kv, "allow_buying_duplicates", 0));
-
-	CloseHandle(kv);
+	delete kv;
 }
 
 public void OnMainMenuShopClick(int client, const char[] value)
@@ -161,8 +159,6 @@ void OpenShop(int client)
 	Store_GetCategories(GetCategoriesCallback, true, GetClientSerial(client));
 }
 
-Handle categories_menu[MAXPLAYERS+1];
-
 public void GetCategoriesCallback(int[] ids, int count, any serial)
 {		
 	int client = GetClientFromSerial(serial);
@@ -170,8 +166,8 @@ public void GetCategoriesCallback(int[] ids, int count, any serial)
 	if (client == 0)
 		return;
 	
-	categories_menu[client] = CreateMenu(ShopMenuSelectHandle);
-	SetMenuTitle(categories_menu[client], "%T\n \n", "Shop", client);
+	categories_menu[client] = new Menu(ShopMenuSelectHandle);
+	categories_menu[client].SetTitle("%T\n \n", "Shop", client);
 	
 	for (int category = 0; category < count; category++)
 	{
@@ -181,15 +177,15 @@ public void GetCategoriesCallback(int[] ids, int count, any serial)
 		if (!StrEqual(requiredPlugin, "") && !Store_IsItemTypeRegistered(requiredPlugin))
 			continue;
 
-		Handle pack = CreateDataPack();
-		WritePackCell(pack, GetClientSerial(client));
-		WritePackCell(pack, ids[category]);
-		WritePackCell(pack, count - category - 1);
+		DataPack pack = new DataPack();
+		pack.WriteCell(GetClientSerial(client));
+		pack.WriteCell(ids[category]);
+		pack.WriteCell(count - category - 1);
 		
-		Handle filter = CreateTrie();
-		SetTrieValue(filter, "is_buyable", 1);
-		SetTrieValue(filter, "category_id", ids[category]);
-		SetTrieValue(filter, "flags", GetUserFlagBits(client));
+		StringMap filter = new StringMap();
+		filter.SetValue("is_buyable", 1);
+		filter.SetValue("category_id", ids[category]);
+		filter.SetValue("flags", GetUserFlagBits(client));
 
 		Store_GetItems(filter, GetItemsForCategoryCallback, true, pack);
 	}
@@ -197,13 +193,13 @@ public void GetCategoriesCallback(int[] ids, int count, any serial)
 
 public void GetItemsForCategoryCallback(int[] ids, int count, DataPack pack)
 {
-	ResetPack(pack);
+	pack.Reset();
 	
-	int serial = ReadPackCell(pack);
-	int categoryId = ReadPackCell(pack);
-	int left = ReadPackCell(pack);
+	int serial = pack.ReadCell();
+	int categoryId = pack.ReadCell();
+	int left = pack.ReadCell();
 	
-	CloseHandle(pack);
+	delete pack;
 	
 	int client = GetClientFromSerial(serial);
 	
@@ -224,35 +220,34 @@ public void GetItemsForCategoryCallback(int[] ids, int count, DataPack pack)
 		char itemValue[8];
 		IntToString(categoryId, itemValue, sizeof(itemValue));
 		
-		AddMenuItem(categories_menu[client], itemValue, displayName);
+		categories_menu[client].AddItem(itemValue, displayName);
 	}
 
 	if (left == 0)
 	{
-		SetMenuExitBackButton(categories_menu[client], true);
-		DisplayMenu(categories_menu[client], client, 0);
+		categories_menu[client].ExitBackButton = true;
+		categories_menu[client].Display(client, MENU_TIME_FOREVER);
 	}
 }
 
 public int ShopMenuSelectHandle(Menu menu, MenuAction action, int client, int slot)
 {
-	if (action == MenuAction_Select)
-	{
-		char categoryIndex[64];
-		
-		if (GetMenuItem(menu, slot, categoryIndex, sizeof(categoryIndex)))
-			OpenShopCategory(client, StringToInt(categoryIndex));
-	}
-	else if (action == MenuAction_Cancel)
-	{
-		if (slot == MenuCancel_ExitBack)
-		{
-			Store_OpenMainMenu(client);
+	switch (action) {
+		case MenuAction_Select: {
+			char categoryIndex[64];
+			
+			if (GetMenuItem(menu, slot, categoryIndex, sizeof(categoryIndex)))
+				OpenShopCategory(client, StringToInt(categoryIndex));
 		}
-	}
-	else if (action == MenuAction_End)
-	{
-		CloseHandle(menu);
+		case MenuAction_Cancel: {
+			if (slot == MenuCancel_ExitBack)
+			{
+				Store_OpenMainMenu(client);
+			}
+		}
+		case MenuAction_End: {
+			delete menu;
+		}
 	}
 
 	return 0;
@@ -268,26 +263,26 @@ public int ShopMenuSelectHandle(Menu menu, MenuAction action, int client, int sl
  */
 void OpenShopCategory(int client, int categoryId)
 {
-	DataPack pack = CreateDataPack();
-	WritePackCell(pack, GetClientSerial(client));
-	WritePackCell(pack, categoryId);
+	DataPack pack = new DataPack();
+	pack.WriteCell(GetClientSerial(client));
+	pack.WriteCell(categoryId);
 	
-	Handle filter = CreateTrie();
-	SetTrieValue(filter, "is_buyable", 1);
-	SetTrieValue(filter, "category_id", categoryId);
-	SetTrieValue(filter, "flags", GetUserFlagBits(client));
+	StringMap filter = new StringMap();
+	filter.SetValue("is_buyable", 1);
+	filter.SetValue("category_id", categoryId);
+	filter.SetValue("flags", GetUserFlagBits(client));
 
 	Store_GetItems(filter, GetItemsCallback, true, pack);
 }
 
 public void GetItemsCallback(int[] ids, int count, DataPack pack)
 {	
-	ResetPack(pack);
+	pack.Reset();
 	
-	int serial = ReadPackCell(pack);
-	int categoryId = ReadPackCell(pack);
+	int serial = pack.ReadCell();
+	int categoryId = pack.ReadCell();
 	
-	CloseHandle(pack);
+	delete pack;
 	
 	int client = GetClientFromSerial(serial);
 	
@@ -305,8 +300,8 @@ public void GetItemsCallback(int[] ids, int count, DataPack pack)
 	char categoryDisplayName[64];
 	Store_GetCategoryDisplayName(categoryId, categoryDisplayName, sizeof(categoryDisplayName));
 		
-	Handle menu = CreateMenu(ShopCategoryMenuSelectHandle);
-	SetMenuTitle(menu, "%T - %s\n \n", "Shop", client, categoryDisplayName);
+	Menu menu = new Menu(ShopCategoryMenuSelectHandle);
+	menu.SetTitle("%T - %s\n \n", "Shop", client, categoryDisplayName);
 
 	for (int item = 0; item < count; item++)
 	{		
@@ -322,31 +317,30 @@ public void GetItemsCallback(int[] ids, int count, DataPack pack)
 		char value[8];
 		IntToString(ids[item], value, sizeof(value));
 		
-		AddMenuItem(menu, value, text);    
+		menu.AddItem(value, text);    
 	}
 
-	SetMenuExitBackButton(menu, true);
-	DisplayMenu(menu, client, 0);   
+	menu.ExitBackButton = true;
+	menu.Display(client, MENU_TIME_FOREVER);   
 }
 
 public int ShopCategoryMenuSelectHandle(Menu menu, MenuAction action, int client, int slot)
 {
-	if (action == MenuAction_Select)
-	{
-		char value[12];
+	switch (action) {
+		case MenuAction_Select: {
+			char value[12];
 
-		if (GetMenuItem(menu, slot, value, sizeof(value)))
-		{
-			DoBuyItem(client, StringToInt(value));
+			if (GetMenuItem(menu, slot, value, sizeof(value)))
+			{
+				DoBuyItem(client, StringToInt(value));
+			}
 		}
-	}
-	else if (action == MenuAction_Cancel)
-	{
-		OpenShop(client);
-	}
-	else if (action == MenuAction_End)
-	{
-		CloseHandle(menu);
+		case MenuAction_Cancel: {
+			OpenShop(client);
+		}
+		case MenuAction_End: {
+			delete menu;
+		}
 	}
 
 	return 0;
@@ -363,17 +357,17 @@ void DoBuyItem(int client, int itemId, bool confirmed = false, bool checkeddupes
 		char itemName[STORE_MAX_NAME_LENGTH];
 		Store_GetItemName(itemId, itemName, sizeof(itemName));
 
-		DataPack pack = CreateDataPack();
-		WritePackCell(pack, GetClientSerial(client));
-		WritePackCell(pack, itemId);
+		DataPack pack = new DataPack();
+		pack.WriteCell(GetClientSerial(client));
+		pack.WriteCell(itemId);
 
 		Store_GetUserItemCount(GetSteamAccountID(client), itemName, DoBuyItem_ItemCountCallBack, pack);
 	}
 	else
 	{
-		DataPack pack = CreateDataPack();
-		WritePackCell(pack, GetClientSerial(client));
-		WritePackCell(pack, itemId);
+		DataPack pack = new DataPack();
+		pack.WriteCell(GetClientSerial(client));
+		pack.WriteCell(itemId);
 
 		Store_BuyItem(GetSteamAccountID(client), itemId, OnBuyItemComplete, pack);
 	}
@@ -381,18 +375,19 @@ void DoBuyItem(int client, int itemId, bool confirmed = false, bool checkeddupes
 
 public void DoBuyItem_ItemCountCallBack(int count, DataPack pack)
 {
-	ResetPack(pack);
+	pack.Reset();
 
-	int client = GetClientFromSerial(ReadPackCell(pack));
+	int client = GetClientFromSerial(pack.ReadCell());
+
 	if (client == 0)
 	{
-		CloseHandle(pack);
+		delete pack;
 		return;
 	}
 
-	int itemId = ReadPackCell(pack);
+	int itemId = pack.ReadCell();
 
-	CloseHandle(pack);
+	delete pack;
 
 	if (count <= 0)
 	{
@@ -411,53 +406,51 @@ void DisplayConfirmationMenu(int client, int itemId)
 	char displayName[STORE_MAX_DISPLAY_NAME_LENGTH];
 	Store_GetItemDisplayName(itemId, displayName, sizeof(displayName));
 
-	Menu menu = CreateMenu(ConfirmationMenuSelectHandle);
-	SetMenuTitle(menu, "%T", "Item Purchase Confirmation", client,  displayName);
+	Menu menu = new Menu(ConfirmationMenuSelectHandle);
+	menu.SetTitle("%T", "Item Purchase Confirmation", client,  displayName);
 
 	char value[8];
 	IntToString(itemId, value, sizeof(value));
 
-	AddMenuItem(menu, value, "Yes");
-	AddMenuItem(menu, "no", "No");
+	menu.AddItem(value, "Yes");
+	menu.AddItem("no", "No");
 
-	SetMenuExitButton(menu, false);
-	DisplayMenu(menu, client, 0);  
+	menu.ExitButton = false;
+	menu.Display(client, MENU_TIME_FOREVER);  
 }
 
 public int ConfirmationMenuSelectHandle(Menu menu, MenuAction action, int client, int slot)
 {
-	if (action == MenuAction_Select)
-	{
-		char value[12];
-		if (GetMenuItem(menu, slot, value, sizeof(value)))
-		{
-			if (StrEqual(value, "no"))
+	switch (action) {
+		case MenuAction_Select: {
+			char value[12];
+			if (GetMenuItem(menu, slot, value, sizeof(value)))
 			{
-				OpenShop(client);
-			}
-			else
-			{
-				DoBuyItem(client, StringToInt(value), true);
+				if (StrEqual(value, "no"))
+				{
+					OpenShop(client);
+				}
+				else
+				{
+					DoBuyItem(client, StringToInt(value), true);
+				}
 			}
 		}
-	}
-	else if (action == MenuAction_Cancel)
-	{
-		OpenShop(client);
-	}
-	else if (action == MenuAction_DisplayItem) 
-	{
-		char display[64];
-		GetMenuItem(menu, slot, "", 0, _, display, sizeof(display));
+		case MenuAction_Cancel: {
+			OpenShop(client);
+		}
+		case MenuAction_DisplayItem: {
+			char display[64];
+			GetMenuItem(menu, slot, "", 0, _, display, sizeof(display));
 
-		char buffer[255];
-		Format(buffer, sizeof(buffer), "%T", display, client);
+			char buffer[255];
+			Format(buffer, sizeof(buffer), "%T", display, client);
 
-		return RedrawMenuItem(buffer);
-	}
-	else if (action == MenuAction_End)
-	{
-		CloseHandle(menu);
+			return RedrawMenuItem(buffer);
+		}
+		case MenuAction_End: {
+			delete menu;
+		}
 	}
 
 	return 0;
@@ -465,18 +458,19 @@ public int ConfirmationMenuSelectHandle(Menu menu, MenuAction action, int client
 
 public void OnBuyItemComplete(bool success, DataPack pack)
 {
-	ResetPack(pack);
+	pack.Reset();
 
-	int client = GetClientFromSerial(ReadPackCell(pack));
+	int client = GetClientFromSerial(pack.ReadCell());
+
 	if (client == 0)
 	{
-		CloseHandle(pack);
+		delete pack;
 		return;
 	}
 
-	int itemId = ReadPackCell(pack);
+	int itemId = pack.ReadCell();
 
-	CloseHandle(pack);
+	delete pack;
 
 	if (success)
 	{
@@ -499,13 +493,13 @@ public void OnBuyItemComplete(bool success, DataPack pack)
 	OpenShop(client);
 }
 
-public int Native_OpenShop(Handle plugin, int params)
+public int Native_OpenShop(Handle plugin, int numParams)
 {       
 	OpenShop(GetNativeCell(1));
 	return 0;
 }
 
-public int Native_OpenShopCategory(Handle plugin, int params)
+public int Native_OpenShopCategory(Handle plugin, int numParams)
 {       
 	OpenShopCategory(GetNativeCell(1), GetNativeCell(2));
 	return 0;

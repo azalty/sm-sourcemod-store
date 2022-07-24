@@ -8,12 +8,14 @@
 #include <store/store-logging>
 #include <store/store-loadout>
 
-bool g_hideEmptyCategories = false;
+bool g_hideEmptyCategories;
 
 char g_menuCommands[32][32];
 
-Handle g_itemTypes;
-Handle g_itemTypeNameIndex;
+ArrayList g_itemTypes;
+StringMap g_itemTypeNameIndex;
+
+Menu categories_menu[MAXPLAYERS+1];
 
 /**
  * Called before plugin is loaded.
@@ -72,24 +74,24 @@ public void OnPluginStart()
  */
 void LoadConfig() 
 {
-	KeyValues kv = CreateKeyValues("root");
+	KeyValues kv = new KeyValues("root");
 	
 	char path[PLATFORM_MAX_PATH];
 	BuildPath(Path_SM, path, sizeof(path), "configs/store/inventory.cfg");
 	
-	if (!FileToKeyValues(kv, path)) 
+	if (!kv.ImportFromFile(path)) 
 	{
-		CloseHandle(kv);
+		delete kv;
 		SetFailState("Can't read config file %s", path);
 	}
 
 	char menuCommands[255];
-	KvGetString(kv, "inventory_commands", menuCommands, sizeof(menuCommands));
+	kv.GetString("inventory_commands", menuCommands, sizeof(menuCommands));
 	ExplodeString(menuCommands, " ", g_menuCommands, sizeof(g_menuCommands), sizeof(g_menuCommands[]));
 
-	g_hideEmptyCategories = view_as<bool>(KvGetNum(kv, "hide_empty_categories", 0));
+	g_hideEmptyCategories = view_as<bool>(kv.GetNum("hide_empty_categories", 0));
 		
-	CloseHandle(kv);
+	delete kv;
 }
 
 public void OnMainMenuInventoryClick(int client, const char[] value)
@@ -139,18 +141,18 @@ public Action Command_OpenInventory(int client, int args)
 
 public Action Command_PrintItemTypes(int client, int args)
 {
-	for (int itemTypeIndex = 0, size = GetArraySize(g_itemTypes); itemTypeIndex < size; itemTypeIndex++)
+	for (int itemTypeIndex = 0, size = g_itemTypes.Length; itemTypeIndex < size; itemTypeIndex++)
 	{
-		Handle itemType = view_as<Handle>(GetArrayCell(g_itemTypes, itemTypeIndex));
+		DataPack itemType = view_as<DataPack>(g_itemTypes.Get(itemTypeIndex));
 		
-		ResetPack(itemType);
-		Handle plugin = view_as<Handle>(ReadPackCell(itemType));
+		itemType.Reset();
+		Handle plugin = view_as<Handle>(itemType.ReadCell());
 
-		SetPackPosition(itemType, view_as<DataPackPos>(24));
+		itemType.Position = view_as<DataPackPos>(24);
 		char typeName[32];
-		ReadPackString(itemType, typeName, sizeof(typeName));
+		itemType.ReadString(typeName, sizeof(typeName));
 
-		ResetPack(itemType);
+		itemType.Reset();
 
 		char pluginName[32];
 		GetPluginFilename(plugin, pluginName, sizeof(pluginName));
@@ -179,8 +181,6 @@ void OpenInventory(int client)
 	Store_GetCategories(GetCategoriesCallback, true, GetClientSerial(client));
 }
 
-Handle categories_menu[MAXPLAYERS+1];
-
 public void GetCategoriesCallback(int[] ids, int count, any serial)
 {	
 	int client = GetClientFromSerial(serial);
@@ -188,8 +188,8 @@ public void GetCategoriesCallback(int[] ids, int count, any serial)
 	if (client == 0)
 		return;
 	
-	categories_menu[client] = CreateMenu(InventoryMenuSelectHandle);
-	SetMenuTitle(categories_menu[client], "%T\n \n", "Inventory", client);
+	categories_menu[client] = new Menu(InventoryMenuSelectHandle);
+	categories_menu[client].SetTitle("%T\n \n", "Inventory", client);
 		
 	for (int category = 0; category < count; category++)
 	{
@@ -197,17 +197,17 @@ public void GetCategoriesCallback(int[] ids, int count, any serial)
 		Store_GetCategoryPluginRequired(ids[category], requiredPlugin, sizeof(requiredPlugin));
 		
 		int typeIndex;
-		if (!StrEqual(requiredPlugin, "") && !GetTrieValue(g_itemTypeNameIndex, requiredPlugin, typeIndex))
+		if (!StrEqual(requiredPlugin, "") && !g_itemTypeNameIndex.GetValue(requiredPlugin, typeIndex))
 			continue;
 
-		Handle pack = CreateDataPack();
-		WritePackCell(pack, GetClientSerial(client));
-		WritePackCell(pack, ids[category]);
-		WritePackCell(pack, count - category - 1);
+		DataPack pack = new DataPack();
+		pack.WriteCell(GetClientSerial(client));
+		pack.WriteCell(ids[category]);
+		pack.WriteCell(count - category - 1);
 		
-		Handle filter = CreateTrie();
-		SetTrieValue(filter, "category_id", ids[category]);
-		SetTrieValue(filter, "flags", GetUserFlagBits(client));
+		StringMap filter = new StringMap();
+		filter.SetValue("category_id", ids[category]);
+		filter.SetValue("flags", GetUserFlagBits(client));
 
 		Store_GetUserItems(filter, GetSteamAccountID(client), Store_GetClientLoadout(client), GetItemsForCategoryCallback, pack);
 	}
@@ -215,13 +215,13 @@ public void GetCategoriesCallback(int[] ids, int count, any serial)
 
 public void GetItemsForCategoryCallback(int[] ids, bool[] equipped, int[] itemCount, int count, int loadoutId, DataPack pack)
 {
-	ResetPack(pack);
+	pack.Reset();
 	
-	int serial = ReadPackCell(pack);
-	int categoryId = ReadPackCell(pack);
-	int left = ReadPackCell(pack);
+	int serial = pack.ReadCell();
+	int categoryId = pack.ReadCell();
+	int left = pack.ReadCell();
 	
-	CloseHandle(pack);
+	delete pack;
 	
 	int client = GetClientFromSerial(serial);
 	
@@ -232,8 +232,8 @@ public void GetItemsForCategoryCallback(int[] ids, bool[] equipped, int[] itemCo
 	{
 		if (left == 0)
 		{
-			SetMenuExitBackButton(categories_menu[client], true);
-			DisplayMenu(categories_menu[client], client, 0);
+			categories_menu[client].ExitBackButton = true;
+			categories_menu[client].Display(client, MENU_TIME_FOREVER);
 		}
 		return;
 	}
@@ -252,34 +252,36 @@ public void GetItemsForCategoryCallback(int[] ids, bool[] equipped, int[] itemCo
 	char itemValue[8];
 	IntToString(categoryId, itemValue, sizeof(itemValue));
 	
-	AddMenuItem(categories_menu[client], itemValue, displayName);
+	categories_menu[client].AddItem( itemValue, displayName);
 
 	if (left == 0)
 	{
-		SetMenuExitBackButton(categories_menu[client], true);
-		DisplayMenu(categories_menu[client], client, 0);
+		categories_menu[client].ExitBackButton = true;
+		categories_menu[client].Display(client, MENU_TIME_FOREVER);
 	}
 }
 
 public int InventoryMenuSelectHandle(Menu menu, MenuAction action, int client, int slot)
 {
-	if (action == MenuAction_Select)
-	{
-		char categoryIndex[64];
-		
-		if (GetMenuItem(menu, slot, categoryIndex, sizeof(categoryIndex)))
-			OpenInventoryCategory(client, StringToInt(categoryIndex));
-	}
-	else if (action == MenuAction_Cancel)
-	{
-		if (slot == MenuCancel_ExitBack)
+	switch (action) {
+		case MenuAction_Select:
 		{
-			Store_OpenMainMenu(client);
+			char categoryIndex[64];
+			
+			if (GetMenuItem(menu, slot, categoryIndex, sizeof(categoryIndex)))
+				OpenInventoryCategory(client, StringToInt(categoryIndex));
 		}
-	}
-	else if (action == MenuAction_End)
-	{
-		CloseHandle(menu);
+		case MenuAction_Cancel:
+		{
+			if (slot == MenuCancel_ExitBack)
+			{
+				Store_OpenMainMenu(client);
+			}
+		}
+		case MenuAction_End:
+		{
+			delete menu;
+		}
 	}
 
 	return 0;
@@ -295,27 +297,27 @@ public int InventoryMenuSelectHandle(Menu menu, MenuAction action, int client, i
 */
 void OpenInventoryCategory(int client, int categoryId, int slot = 0)
 {
-	Handle pack = CreateDataPack();
-	WritePackCell(pack, GetClientSerial(client));
-	WritePackCell(pack, categoryId);
-	WritePackCell(pack, slot);
+	DataPack pack = new DataPack();
+	pack.WriteCell(GetClientSerial(client));
+	pack.WriteCell(categoryId);
+	pack.WriteCell(slot);
 	
-	Handle filter = CreateTrie();
-	SetTrieValue(filter, "category_id", categoryId);
-	SetTrieValue(filter, "flags", GetUserFlagBits(client));
+	StringMap filter = new StringMap();
+	filter.SetValue("category_id", categoryId);
+	filter.SetValue("flags", GetUserFlagBits(client));
 
 	Store_GetUserItems(filter, GetSteamAccountID(client), Store_GetClientLoadout(client), GetUserItemsCallback, pack);
 }
 
 public void GetUserItemsCallback(int[] ids, bool[] equipped, int[] itemCount, int count, int loadoutId, DataPack pack)
 {
-	ResetPack(pack);
+	pack.Reset();
 	
-	int serial = ReadPackCell(pack);
-	int categoryId = ReadPackCell(pack);
-	int slot = ReadPackCell(pack);
+	int serial = pack.ReadCell();
+	int categoryId = pack.ReadCell();
+	int slot = pack.ReadCell();
 	
-	CloseHandle(pack);
+	delete pack;
 	
 	int client = GetClientFromSerial(serial);
 	
@@ -333,8 +335,8 @@ public void GetUserItemsCallback(int[] ids, bool[] equipped, int[] itemCount, in
 	char categoryDisplayName[64];
 	Store_GetCategoryDisplayName(categoryId, categoryDisplayName, sizeof(categoryDisplayName));
 		
-	Handle menu = CreateMenu(InventoryCategoryMenuSelectHandle);
-	SetMenuTitle(menu, "%T - %s\n \n", "Inventory", client, categoryDisplayName);
+	Menu menu = new Menu(InventoryCategoryMenuSelectHandle);
+	menu.SetTitle("%T - %s\n \n", "Inventory", client, categoryDisplayName);
 	
 	for (int item = 0; item < count; item++)
 	{
@@ -355,111 +357,110 @@ public void GetUserItemsCallback(int[] ids, bool[] equipped, int[] itemCount, in
 		char value[16];
 		Format(value, sizeof(value), "%b,%d", equipped[item], ids[item]);
 		
-		AddMenuItem(menu, value, text);    
+		menu.AddItem(value, text);    
 	}
 
-	SetMenuExitBackButton(menu, true);
+	menu.ExitBackButton = true;
 	
 	if (slot == 0)
-		DisplayMenu(menu, client, 0);   
+		menu.Display(client, MENU_TIME_FOREVER);
 	else
-		DisplayMenuAtItem(menu, client, slot, 0);
+		menu.DisplayAt(client, slot, MENU_TIME_FOREVER);
 }
 
 public int InventoryCategoryMenuSelectHandle(Menu menu, MenuAction action, int client, int slot)
 {
-	if (action == MenuAction_Select)
-	{
-		char value[16];
+	switch (action) {
+		case MenuAction_Select: {
+			char value[16];
 
-		if (GetMenuItem(menu, slot, value, sizeof(value)))
-		{
-			char buffers[2][16];
-			ExplodeString(value, ",", buffers, sizeof(buffers), sizeof(buffers[]));
-			
-			bool equipped = view_as<bool>(StringToInt(buffers[0]));
-			int id = StringToInt(buffers[1]);
-			
-			char name[STORE_MAX_NAME_LENGTH];
-			Store_GetItemName(id, name, sizeof(name));
-			
-			char type[STORE_MAX_TYPE_LENGTH];
-			Store_GetItemType(id, type, sizeof(type));
-			
-			char loadoutSlot[STORE_MAX_LOADOUTSLOT_LENGTH];
-			Store_GetItemLoadoutSlot(id, loadoutSlot, sizeof(loadoutSlot));
-			
-			int itemTypeIndex = -1;
-			GetTrieValue(g_itemTypeNameIndex, type, itemTypeIndex);
-			
-			if (itemTypeIndex == -1)
+			if (menu.GetItem(slot, value, sizeof(value)))
 			{
-				PrintToChat(client, "%s%t", STORE_PREFIX, "Item type not registered", type);
-				Store_LogWarning("The item type '%s' wasn't registered by any plugin.", type);
+				char buffers[2][16];
+				ExplodeString(value, ",", buffers, sizeof(buffers), sizeof(buffers[]));
 				
-				OpenInventoryCategory(client, Store_GetItemCategory(id));
+				bool equipped = view_as<bool>(StringToInt(buffers[0]));
+				int id = StringToInt(buffers[1]);
 				
-				return 0;
-			}
-			
-			Store_ItemUseAction callbackValue = Store_DoNothing;
-			
-			Handle itemType = GetArrayCell(g_itemTypes, itemTypeIndex);
-			ResetPack(itemType);
-			
-			Handle plugin = view_as<Handle>(ReadPackCell(itemType));
-			Function callback = ReadPackFunction(itemType);
-		
-			Call_StartFunction(plugin, callback);
-			Call_PushCell(client);
-			Call_PushCell(id);
-			Call_PushCell(equipped);
-			Call_Finish(callbackValue);
-			
-			if (callbackValue != Store_DoNothing)
-			{
-				int auth = GetSteamAccountID(client);
+				char name[STORE_MAX_NAME_LENGTH];
+				Store_GetItemName(id, name, sizeof(name));
+				
+				char type[STORE_MAX_TYPE_LENGTH];
+				Store_GetItemType(id, type, sizeof(type));
+				
+				char loadoutSlot[STORE_MAX_LOADOUTSLOT_LENGTH];
+				Store_GetItemLoadoutSlot(id, loadoutSlot, sizeof(loadoutSlot));
+				
+				int itemTypeIndex = -1;
+				g_itemTypeNameIndex.GetValue(type, itemTypeIndex);
+				
+				if (itemTypeIndex == -1)
+				{
+					PrintToChat(client, "%s%t", STORE_PREFIX, "Item type not registered", type);
+					Store_LogWarning("The item type '%s' wasn't registered by any plugin.", type);
 					
-				Handle pack = CreateDataPack();
-				WritePackCell(pack, GetClientSerial(client));
-				WritePackCell(pack, slot);
+					OpenInventoryCategory(client, Store_GetItemCategory(id));
+					
+					return 0;
+				}
+				
+				Store_ItemUseAction callbackValue = Store_DoNothing;
+				
+				DataPack itemType = view_as<DataPack>(g_itemTypes.Get(itemTypeIndex));
+				itemType.Reset();
+				
+				Handle plugin = view_as<Handle>(itemType.ReadCell());
+				Function callback = itemType.ReadFunction();
+			
+				Call_StartFunction(plugin, callback);
+				Call_PushCell(client);
+				Call_PushCell(id);
+				Call_PushCell(equipped);
+				Call_Finish(callbackValue);
+				
+				if (callbackValue != Store_DoNothing)
+				{
+					int auth = GetSteamAccountID(client);
+						
+					DataPack pack = new DataPack();
+					pack.WriteCell(GetClientSerial(client));
+					pack.WriteCell(slot);
 
-				if (callbackValue == Store_EquipItem)
-				{
-					if (StrEqual(loadoutSlot, ""))
+					if (callbackValue == Store_EquipItem)
 					{
-						Store_LogWarning("A user tried to equip an item that doesn't have a loadout slot.");
+						if (StrEqual(loadoutSlot, ""))
+						{
+							Store_LogWarning("A user tried to equip an item that doesn't have a loadout slot.");
+						}
+						else
+						{
+							Store_SetItemEquippedState(auth, id, Store_GetClientLoadout(client), true, EquipItemCallback, pack);
+						}
 					}
-					else
+					else if (callbackValue == Store_UnequipItem)
 					{
-						Store_SetItemEquippedState(auth, id, Store_GetClientLoadout(client), true, EquipItemCallback, pack);
+						if (StrEqual(loadoutSlot, ""))
+						{
+							Store_LogWarning("A user tried to unequip an item that doesn't have a loadout slot.");
+						}
+						else
+						{				
+							Store_SetItemEquippedState(auth, id, Store_GetClientLoadout(client), false, EquipItemCallback, pack);
+						}
 					}
-				}
-				else if (callbackValue == Store_UnequipItem)
-				{
-					if (StrEqual(loadoutSlot, ""))
+					else if (callbackValue == Store_DeleteItem)
 					{
-						Store_LogWarning("A user tried to unequip an item that doesn't have a loadout slot.");
+						Store_RemoveUserItem(auth, id, UseItemCallback, pack);
 					}
-					else
-					{				
-						Store_SetItemEquippedState(auth, id, Store_GetClientLoadout(client), false, EquipItemCallback, pack);
-					}
-				}
-				else if (callbackValue == Store_DeleteItem)
-				{
-					Store_RemoveUserItem(auth, id, UseItemCallback, pack);
 				}
 			}
 		}
-	}
-	else if (action == MenuAction_Cancel)
-	{
-		OpenInventory(client);
-	}
-	else if (action == MenuAction_End)
-	{
-		CloseHandle(menu);
+		case MenuAction_Cancel: {
+			OpenInventory(client);
+		}
+		case MenuAction_End: {
+			delete menu;
+		}
 	}
 
 	return 0;
@@ -467,12 +468,12 @@ public int InventoryCategoryMenuSelectHandle(Menu menu, MenuAction action, int c
 
 public void EquipItemCallback(int accountId, int itemId, int loadoutId, DataPack pack)
 {
-	ResetPack(pack);
+	pack.Reset();
 	
-	int serial = ReadPackCell(pack);
-	// int slot = ReadPackCell(pack);
+	int serial = pack.ReadCell();
+	// int slot = pack.ReadCell();
 	
-	CloseHandle(pack);
+	delete pack;
 	
 	int client = GetClientFromSerial(serial);
 	
@@ -484,12 +485,12 @@ public void EquipItemCallback(int accountId, int itemId, int loadoutId, DataPack
 
 public void UseItemCallback(int accountId, int itemId, DataPack pack)
 {
-	ResetPack(pack);
+	pack.Reset();
 	
-	int serial = ReadPackCell(pack);
-	// int slot = ReadPackCell(pack);
+	int serial = pack.ReadCell();
+	// int slot = pack.ReadCell();
 	
-	CloseHandle(pack);
+	delete pack;
 	
 	int client = GetClientFromSerial(serial);
 	
@@ -518,45 +519,45 @@ public void UseItemCallback(int accountId, int itemId, DataPack pack)
 */
 void RegisterItemType(const char[] type, Handle plugin, Function useCallback = INVALID_FUNCTION, Function attrsCallback = INVALID_FUNCTION)
 {
-	if (g_itemTypes == INVALID_HANDLE)
-		g_itemTypes = CreateArray();
+	if (g_itemTypes == null)
+		g_itemTypes = new ArrayList();
 	
-	if (g_itemTypeNameIndex == INVALID_HANDLE)
+	if (g_itemTypeNameIndex == null)
 	{
-		g_itemTypeNameIndex = CreateTrie();
+		g_itemTypeNameIndex = new StringMap();
 	}
 	else
 	{
 		int itemType;
-		if (GetTrieValue(g_itemTypeNameIndex, type, itemType))
+		if (g_itemTypeNameIndex.GetValue(type, itemType))
 		{
-			CloseHandle(view_as<Handle>(GetArrayCell(g_itemTypes, itemType)));
+			delete view_as<Handle>(g_itemTypes.Get(itemType));
 		}
 	}
 
-	Handle itemType = CreateDataPack();
-	WritePackCell(itemType, plugin); // 0
-	WritePackFunction(itemType, useCallback); // 8
-	WritePackFunction(itemType, attrsCallback); // 16
-	WritePackString(itemType, type); // 24
+	DataPack itemType = new DataPack();
+	itemType.WriteCell(plugin); // 0
+	itemType.WriteFunction(useCallback); // 8
+	itemType.WriteFunction(attrsCallback); // 16
+	itemType.WriteString(type); // 24
 
-	int index = PushArrayCell(g_itemTypes, itemType);
-	SetTrieValue(g_itemTypeNameIndex, type, index);
+	int index = g_itemTypes.Push(itemType);
+	g_itemTypeNameIndex.SetValue(type, index);
 }
 
-public int Native_OpenInventory(Handle plugin, int params)
+public int Native_OpenInventory(Handle plugin, int numParams)
 {       
 	OpenInventory(GetNativeCell(1));
 	return 0;
 }
 
-public int Native_OpenInventoryCategory(Handle plugin, int params)
+public int Native_OpenInventoryCategory(Handle plugin, int numParams)
 {       
 	OpenInventoryCategory(GetNativeCell(1), GetNativeCell(2));
 	return 0;
 }
 
-public int Native_RegisterItemType(Handle plugin, int params)
+public int Native_RegisterItemType(Handle plugin, int numParams)
 {
 	char type[STORE_MAX_TYPE_LENGTH];
 	GetNativeString(1, type, sizeof(type));
@@ -565,25 +566,25 @@ public int Native_RegisterItemType(Handle plugin, int params)
 	return 0;
 }
 
-public int Native_IsItemTypeRegistered(Handle plugin, int params)
+public int Native_IsItemTypeRegistered(Handle plugin, int numParams)
 {
 	char type[STORE_MAX_TYPE_LENGTH];
 	GetNativeString(1, type, sizeof(type));
 	
 	int typeIndex;
-	return GetTrieValue(g_itemTypeNameIndex, type, typeIndex);
+	return g_itemTypeNameIndex.GetValue(type, typeIndex);
 }
 
-public int Native_CallItemAttrsCallback(Handle plugin, int params)
+public int Native_CallItemAttrsCallback(Handle plugin, int numParams)
 {
-	if (g_itemTypeNameIndex == INVALID_HANDLE)
+	if (g_itemTypeNameIndex == null)
 		return false;
 		
 	char type[STORE_MAX_TYPE_LENGTH];
 	GetNativeString(1, type, sizeof(type));
 
 	int typeIndex;
-	if (!GetTrieValue(g_itemTypeNameIndex, type, typeIndex))
+	if (!g_itemTypeNameIndex.GetValue(type, typeIndex))
 		return false;
 
 	char name[STORE_MAX_NAME_LENGTH];
@@ -592,14 +593,14 @@ public int Native_CallItemAttrsCallback(Handle plugin, int params)
 	char attrs[STORE_MAX_ATTRIBUTES_LENGTH];
 	GetNativeString(3, attrs, sizeof(attrs));		
 
-	Handle pack = GetArrayCell(g_itemTypes, typeIndex);
-	ResetPack(pack);
+	DataPack pack = view_as<DataPack>(g_itemTypes.Get(typeIndex));
+	pack.Reset();
 
-	Handle callbackPlugin = view_as<Handle>(ReadPackCell(pack));
+	Handle callbackPlugin = view_as<Handle>(pack.ReadCell());
 	
-	SetPackPosition(pack, view_as<DataPackPos>(16));
+	pack.Position = view_as<DataPackPos>(16);
 
-	Function callback = ReadPackFunction(pack);
+	Function callback = pack.ReadFunction();
 
 	if (callback == INVALID_FUNCTION)
 		return false;

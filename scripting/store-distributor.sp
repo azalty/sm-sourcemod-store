@@ -64,59 +64,59 @@ public void OnAllPluginsLoaded()
  */
 void LoadConfig() 
 {
-	KeyValues kv = CreateKeyValues("root");
+	KeyValues kv = new KeyValues("root");
 	
 	char path[PLATFORM_MAX_PATH];
 	BuildPath(Path_SM, path, sizeof(path), "configs/store/distributor.cfg");
 	
-	if (!FileToKeyValues(kv, path)) 
+	if (!kv.ImportFromFile(path)) 
 	{
-		CloseHandle(kv);
+		delete kv;
 		SetFailState("Can't read config file %s", path);
 	}
 
-	g_timeInSeconds = KvGetFloat(kv, "time_per_distribute", 180.0);
-	g_enableMessagePerTick = view_as<bool>(KvGetNum(kv, "enable_message_per_distribute", 0));
+	g_timeInSeconds = kv.GetFloat("time_per_distribute", 180.0);
+	g_enableMessagePerTick = view_as<bool>(kv.GetNum("enable_message_per_distribute", 0));
 
-	if (KvJumpToKey(kv, "distribution"))
+	if (kv.JumpToKey("distribution"))
 	{
-		g_baseMinimum = KvGetNum(kv, "base_minimum", 1);
-		g_baseMaximum = KvGetNum(kv, "base_maximum", 3);
+		g_baseMinimum = kv.GetNum("base_minimum", 1);
+		g_baseMaximum = kv.GetNum("base_maximum", 3);
 
-		if (KvJumpToKey(kv, "filters"))
+		if (kv.JumpToKey("filters"))
 		{
 			g_filterCount = 0;
 
-			if (KvGotoFirstSubKey(kv))
+			if (kv.GotoFirstSubKey())
 			{
 				do
 				{
-					g_filters[g_filterCount].FilterMultiplier = KvGetFloat(kv, "multiplier", 1.0);
-					g_filters[g_filterCount].FilterMinimumMultiplier = KvGetFloat(kv, "min_multiplier", 1.0);
-					g_filters[g_filterCount].FilterMaximumMultiplier = KvGetFloat(kv, "max_multiplier", 1.0);
+					g_filters[g_filterCount].FilterMultiplier = kv.GetFloat("multiplier", 1.0);
+					g_filters[g_filterCount].FilterMinimumMultiplier = kv.GetFloat("min_multiplier", 1.0);
+					g_filters[g_filterCount].FilterMaximumMultiplier = kv.GetFloat("max_multiplier", 1.0);
 
-					g_filters[g_filterCount].FilterAddend = KvGetNum(kv, "addend");
-					g_filters[g_filterCount].FilterMinimumAddend = KvGetNum(kv, "min_addend");
-					g_filters[g_filterCount].FilterMaximumAddend = KvGetNum(kv, "max_addend");
+					g_filters[g_filterCount].FilterAddend = kv.GetNum("addend");
+					g_filters[g_filterCount].FilterMinimumAddend = kv.GetNum("min_addend");
+					g_filters[g_filterCount].FilterMaximumAddend = kv.GetNum("max_addend");
 
-					g_filters[g_filterCount].FilterPlayerCount = KvGetNum(kv, "player_count", 0);
-					g_filters[g_filterCount].FilterTeam = KvGetNum(kv, "team", -1);
+					g_filters[g_filterCount].FilterPlayerCount = kv.GetNum("player_count", 0);
+					g_filters[g_filterCount].FilterTeam = kv.GetNum("team", -1);
                                        
 					char flags[32];
-					KvGetString(kv, "flags", flags, sizeof(flags));
+					kv.GetString("flags", flags, sizeof(flags));
 
 					if (!StrEqual(flags, ""))
 						g_filters[g_filterCount].FilterFlags = ReadFlagString(flags);
 
-					KvGetString(kv, "map", g_filters[g_filterCount].FilterMap, 32);
+					kv.GetString("map", g_filters[g_filterCount].FilterMap, 32);
 
 					g_filterCount++;
-				} while (KvGotoNextKey(kv));
+				} while (kv.GotoNextKey());
 			}
 		}
 	}
 
-	CloseHandle(kv);
+	delete kv;
 }
 
 public Action ForgivePoints(Handle timer)

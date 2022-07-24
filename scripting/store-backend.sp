@@ -6,9 +6,9 @@
 #include <store/store-backend>
 #include <store/store-inventory>
 
-#define MAX_CATEGORIES	32
-#define MAX_ITEMS 		1024
-#define MAX_LOADOUTS	32
+#define MAX_CATEGORIES 32
+#define MAX_ITEMS 1024
+#define MAX_LOADOUTS 32
 
 enum struct Category
 {
@@ -43,12 +43,12 @@ enum struct Loadout
 	int LoadoutTeam;
 }
 
-Handle g_dbInitializedForward;
-Handle g_reloadItemsForward;
-Handle g_reloadItemsPostForward;
+GlobalForward g_dbInitializedForward;
+GlobalForward g_reloadItemsForward;
+GlobalForward g_reloadItemsPostForward;
 
-Handle g_hSQL;
-int g_reconnectCounter = 0;
+Database g_hSQL;
+int g_reconnectCounter;
 
 Category g_categories[MAX_CATEGORIES];
 int g_categoryCount = -1;
@@ -134,9 +134,9 @@ public Plugin myinfo =
  */
 public void OnPluginStart()
 {
-	g_dbInitializedForward = CreateGlobalForward("Store_OnDatabaseInitialized", ET_Event);
-	g_reloadItemsForward = CreateGlobalForward("Store_OnReloadItems", ET_Event);
-	g_reloadItemsPostForward = CreateGlobalForward("Store_OnReloadItemsPost", ET_Event);
+	g_dbInitializedForward = new GlobalForward("Store_OnDatabaseInitialized", ET_Ignore);
+	g_reloadItemsForward = new GlobalForward("Store_OnReloadItems", ET_Ignore);
+	g_reloadItemsPostForward = new GlobalForward("Store_OnReloadItemsPost", ET_Ignore);
 	
 	RegAdminCmd("store_reloaditems", Command_ReloadItems, ADMFLAG_RCON, "Reloads store item cache.");
 }
@@ -172,16 +172,16 @@ public void OnMapStart()
  *
  * @noreturn
  */
-void Register(int accountId, const char[] name = "", int credits = 0)
+void Register(int accountId, const char[] name, int credits)
 {
 	int size = 2 * 32 + 1;
 	char[] safeName = new char[size];
-	SQL_EscapeString(g_hSQL, name, safeName, size);
+	g_hSQL.Escape(name, safeName, size);
 	
 	char query[255];
-	Format(query, sizeof(query), "INSERT INTO store_users (auth, name, credits) VALUES (%d, '%s', %d) ON DUPLICATE KEY UPDATE name = '%s';", accountId, safeName, credits, safeName);
+	g_hSQL.Format(query, sizeof(query), "INSERT INTO store_users (auth, name, credits) VALUES (%d, '%s', %d) ON DUPLICATE KEY UPDATE name = '%s';", accountId, safeName, credits, safeName);
 	
-	SQL_TQuery(g_hSQL, T_RegisterCallback, query, _, DBPrio_High);
+	g_hSQL.Query(T_RegisterCallback, query, _, DBPrio_High);
 }
 
 /**
@@ -277,12 +277,12 @@ void GetCategories(Function callback = INVALID_FUNCTION, Handle plugin = null, b
 	}
 	else
 	{
-		Handle pack = CreateDataPack();
-		WritePackFunction(pack, callback);
-		WritePackCell(pack, plugin);
-		WritePackCell(pack, data);
+		DataPack pack = new DataPack();
+		pack.WriteFunction(callback);
+		pack.WriteCell(plugin);
+		pack.WriteCell(data);
 	
-		SQL_TQuery(g_hSQL, T_GetCategoriesCallback, "SELECT id, display_name, description, require_plugin FROM store_categories", pack);
+		g_hSQL.Query(T_GetCategoriesCallback, "SELECT id, display_name, description, require_plugin FROM store_categories", pack);
 	}
 }
 
@@ -290,28 +290,28 @@ public void T_GetCategoriesCallback(Database db, DBResultSet results, const char
 {
 	if (results == null)
 	{
-		CloseHandle(pack);
+		delete pack;
 		
 		Store_LogError("SQL Error on GetCategories: %s", error);
 		return;
 	}
 	
-	ResetPack(pack);
+	pack.Reset();
 	
-	Function callback = ReadPackFunction(pack);
-	Handle plugin = ReadPackCell(pack);
-	int arg = ReadPackCell(pack);
+	Function callback = pack.ReadFunction();
+	Handle plugin = pack.ReadCell();
+	int arg = pack.ReadCell();
 	
-	CloseHandle(pack);
+	delete pack;
 	
 	g_categoryCount = 0;
 	
-	while (SQL_FetchRow(results))
+	while (results.FetchRow())
 	{
-		g_categories[g_categoryCount].CategoryId = SQL_FetchInt(results, 0);
-		SQL_FetchString(results, 1, g_categories[g_categoryCount].CategoryDisplayName, STORE_MAX_DISPLAY_NAME_LENGTH);
-		SQL_FetchString(results, 2, g_categories[g_categoryCount].CategoryDescription, STORE_MAX_DESCRIPTION_LENGTH);
-		SQL_FetchString(results, 3, g_categories[g_categoryCount].CategoryRequirePlugin, STORE_MAX_REQUIREPLUGIN_LENGTH);
+		g_categories[g_categoryCount].CategoryId = results.FetchInt(0);
+		results.FetchString(1, g_categories[g_categoryCount].CategoryDisplayName, STORE_MAX_DISPLAY_NAME_LENGTH);
+		results.FetchString(2, g_categories[g_categoryCount].CategoryDescription, STORE_MAX_DESCRIPTION_LENGTH);
+		results.FetchString(3, g_categories[g_categoryCount].CategoryRequirePlugin, STORE_MAX_REQUIREPLUGIN_LENGTH);
 		
 		g_categoryCount++;
 	}
@@ -370,7 +370,7 @@ int GetCategoryIndex(int id)
  *
  * @noreturn
  */
-void GetItems(Handle filter = null, Function callback = INVALID_FUNCTION, Handle plugin = null, bool loadFromCache = true, any data = 0)
+void GetItems(StringMap filter = null, Function callback = INVALID_FUNCTION, Handle plugin = null, bool loadFromCache = true, any data = 0)
 {
 	if (loadFromCache && g_itemCount != -1)
 	{
@@ -378,24 +378,24 @@ void GetItems(Handle filter = null, Function callback = INVALID_FUNCTION, Handle
 			return;
 
 		int categoryId;
-		bool categoryFilter = filter == null ? false : GetTrieValue(filter, "category_id", categoryId);
+		bool categoryFilter = filter == null ? false : filter.GetValue("category_id", categoryId);
 		
 		bool isBuyable;
-		bool buyableFilter = filter == null ? false : GetTrieValue(filter, "is_buyable", isBuyable);
+		bool buyableFilter = filter == null ? false : filter.GetValue("is_buyable", isBuyable);
 
 		bool isTradeable;
-		bool tradeableFilter = filter == null ? false : GetTrieValue(filter, "is_tradeable", isTradeable);
+		bool tradeableFilter = filter == null ? false : filter.GetValue("is_tradeable", isTradeable);
 
 		bool isRefundable;
-		bool refundableFilter = filter == null ? false : GetTrieValue(filter, "is_refundable", isRefundable);
+		bool refundableFilter = filter == null ? false : filter.GetValue("is_refundable", isRefundable);
 
 		char type[STORE_MAX_TYPE_LENGTH];
 		bool typeFilter = filter == null ? false : GetTrieString(filter, "type", type, sizeof(type));
 
 		int flags;
-		bool flagsFilter = filter == null ? false : GetTrieValue(filter, "flags", flags);
+		bool flagsFilter = filter == null ? false : filter.GetValue("flags", flags);
 
-		CloseHandle(filter);
+		delete filter;
 		
 		int[] items = new int[g_itemCount];
 
@@ -423,13 +423,13 @@ void GetItems(Handle filter = null, Function callback = INVALID_FUNCTION, Handle
 	}
 	else
 	{
-		Handle pack = CreateDataPack();
-		WritePackCell(pack, filter);
-		WritePackFunction(pack, callback);
-		WritePackCell(pack, plugin);
-		WritePackCell(pack, data);
+		DataPack pack = new DataPack();
+		pack.WriteCell(filter);
+		pack.WriteFunction(callback);
+		pack.WriteCell(plugin);
+		pack.WriteCell(data);
 	
-		SQL_TQuery(g_hSQL, T_GetItemsCallback, "SELECT id, name, display_name, description, type, loadout_slot, price, category_id, attrs, LENGTH(attrs) AS attrs_len, is_buyable, is_tradeable, is_refundable, flags FROM store_items ORDER BY price, display_name", pack);
+		g_hSQL.Query(T_GetItemsCallback, "SELECT id, name, display_name, description, type, loadout_slot, price, category_id, attrs, LENGTH(attrs) AS attrs_len, is_buyable, is_tradeable, is_refundable, flags FROM store_items ORDER BY price, display_name", pack);
 	}
 }
 
@@ -437,7 +437,7 @@ public void T_GetItemsCallback(Database db, DBResultSet results, const char[] er
 {
 	if (results == null)
 	{
-		CloseHandle(pack);
+		delete pack;
 			
 		Store_LogError("SQL Error on GetItems: %s", error);
 		return;
@@ -446,44 +446,44 @@ public void T_GetItemsCallback(Database db, DBResultSet results, const char[] er
 	Call_StartForward(g_reloadItemsForward);
 	Call_Finish();
 	
-	ResetPack(pack);
+	pack.Reset();
 	
-	Handle filter = ReadPackCell(pack);
-	Function callback = ReadPackFunction(pack);
-	Handle plugin = ReadPackCell(pack);
-	int arg = ReadPackCell(pack);
+	StringMap filter = pack.ReadCell();
+	Function callback = pack.ReadFunction();
+	Handle plugin = pack.ReadCell();
+	int arg = pack.ReadCell();
 	
-	CloseHandle(pack);
+	delete pack;
 	
 	g_itemCount = 0;
 	
-	while (SQL_FetchRow(results))
+	while (results.FetchRow())
 	{
-		g_items[g_itemCount].ItemId = SQL_FetchInt(results, 0);
-		SQL_FetchString(results, 1, g_items[g_itemCount].ItemName, STORE_MAX_NAME_LENGTH);
-		SQL_FetchString(results, 2, g_items[g_itemCount].ItemDisplayName, STORE_MAX_DISPLAY_NAME_LENGTH);
-		SQL_FetchString(results, 3, g_items[g_itemCount].ItemDescription, STORE_MAX_DESCRIPTION_LENGTH);
-		SQL_FetchString(results, 4, g_items[g_itemCount].ItemType, STORE_MAX_TYPE_LENGTH);
-		SQL_FetchString(results, 5, g_items[g_itemCount].ItemLoadoutSlot, STORE_MAX_LOADOUTSLOT_LENGTH);
-		g_items[g_itemCount].ItemPrice = SQL_FetchInt(results, 6);		
-		g_items[g_itemCount].ItemCategoryId = SQL_FetchInt(results, 7);
+		g_items[g_itemCount].ItemId = results.FetchInt(0);
+		results.FetchString(1, g_items[g_itemCount].ItemName, STORE_MAX_NAME_LENGTH);
+		results.FetchString(2, g_items[g_itemCount].ItemDisplayName, STORE_MAX_DISPLAY_NAME_LENGTH);
+		results.FetchString(3, g_items[g_itemCount].ItemDescription, STORE_MAX_DESCRIPTION_LENGTH);
+		results.FetchString(4, g_items[g_itemCount].ItemType, STORE_MAX_TYPE_LENGTH);
+		results.FetchString(5, g_items[g_itemCount].ItemLoadoutSlot, STORE_MAX_LOADOUTSLOT_LENGTH);
+		g_items[g_itemCount].ItemPrice = results.FetchInt(6);		
+		g_items[g_itemCount].ItemCategoryId = results.FetchInt(7);
 		
-		if (!SQL_IsFieldNull(results, 8))
+		if (!results.IsFieldNull(8))
 		{
-			int attrsLength = SQL_FetchInt(results, 9);
+			int attrsLength = results.FetchInt(9);
 
 			char[] attrs = new char[attrsLength+1];
-			SQL_FetchString(results, 8, attrs, attrsLength+1);
+			results.FetchString(8, attrs, attrsLength+1);
 
 			Store_CallItemAttrsCallback(g_items[g_itemCount].ItemType, g_items[g_itemCount].ItemName, attrs);
 		}
 
-		g_items[g_itemCount].ItemIsBuyable = view_as<bool>(SQL_FetchInt(results, 10));
-		g_items[g_itemCount].ItemIsTradeable = view_as<bool>(SQL_FetchInt(results, 11));
-		g_items[g_itemCount].ItemIsRefundable = view_as<bool>(SQL_FetchInt(results, 12));
+		g_items[g_itemCount].ItemIsBuyable = view_as<bool>(results.FetchInt(10));
+		g_items[g_itemCount].ItemIsTradeable = view_as<bool>(results.FetchInt(11));
+		g_items[g_itemCount].ItemIsRefundable = view_as<bool>(results.FetchInt(12));
 
 		char flags[11];
-		SQL_FetchString(results, 13, flags, sizeof(flags));
+		results.FetchString(13, flags, sizeof(flags));
 		g_items[g_itemCount].ItemFlags = ReadFlagString(flags);
 
 		g_itemCount++;
@@ -515,62 +515,58 @@ int GetItemIndex(int id)
  */
 void GetItemAttributes(const char[] itemName, Function callback = INVALID_FUNCTION, Handle plugin = null, any data = 0) 
 {
-	Handle pack = CreateDataPack();
+	DataPack pack = new DataPack();
 	WritePackString(pack, itemName);
-	WritePackFunction(pack, callback);
-	WritePackCell(pack, plugin);
-	WritePackCell(pack, data);
+	pack.WriteFunction(callback);
+	pack.WriteCell(plugin);
+	pack.WriteCell(data);
 
 	int itemNameLength = 2*strlen(itemName)+1;
 	
 	char[] itemNameSafe = new char[itemNameLength];
-	SQL_EscapeString(g_hSQL, itemName, itemNameSafe, itemNameLength);
+	g_hSQL.Escape(itemName, itemNameSafe, itemNameLength);
 
 	char query[256];
-	Format(query, sizeof(query), "SELECT attrs, LENGTH(attrs) AS attrs_len FROM store_items WHERE name = '%s'", itemNameSafe);
+	g_hSQL.Format(query, sizeof(query), "SELECT attrs, LENGTH(attrs) AS attrs_len FROM store_items WHERE name = '%s'", itemNameSafe);
 	
-	SQL_TQuery(g_hSQL, T_GetItemAttributesCallback, query, pack);
+	g_hSQL.Query(T_GetItemAttributesCallback, query, pack);
 }
 
 public void T_GetItemAttributesCallback(Database db, DBResultSet results, const char[] error, DataPack pack)
 {
 	if (results == null)
 	{
-		CloseHandle(pack);
+		delete pack;
 			
 		Store_LogError("SQL Error on GetItemAttributes: %s", error);
 		return;
 	}
 	
-	ResetPack(pack);
+	pack.Reset();
 	
 	char itemName[STORE_MAX_NAME_LENGTH];
-	ReadPackString(pack, itemName, sizeof(itemName));
+	pack.ReadString(itemName, sizeof(itemName));
 
-	Function callback = ReadPackFunction(pack);
-	Handle plugin = ReadPackCell(pack);
-	int arg = ReadPackCell(pack);
+	Function callback = pack.ReadFunction();
+	Handle plugin = pack.ReadCell();
+	int arg = pack.ReadCell();
 	
-	CloseHandle(pack);
+	delete pack;
 
-	if (SQL_FetchRow(results))
+	if (results.FetchRow() && !results.IsFieldNull(0))
 	{
-		if (!SQL_IsFieldNull(results, 0))
+		int attrsLength = results.FetchInt(1);
+
+		char[] attrs = new char[attrsLength+1];
+		results.FetchString(0, attrs, attrsLength+1);
+
+		if (callback != INVALID_FUNCTION)
 		{
-			int attrsLength = SQL_FetchInt(results, 1);
-
-			char[] attrs = new char[attrsLength+1];
-			SQL_FetchString(results, 0, attrs, attrsLength+1);
-
-			if (callback != INVALID_FUNCTION)
-			{
-				Call_StartFunction(plugin, callback);
-				Call_PushString(itemName);
-				Call_PushString(attrs);
-				Call_PushCell(arg);
-				Call_Finish();					
-			}
-		
+			Call_StartFunction(plugin, callback);
+			Call_PushString(itemName);
+			Call_PushString(attrs);
+			Call_PushCell(arg);
+			Call_Finish();					
 		}
 	}
 }
@@ -584,42 +580,42 @@ public void T_GetItemAttributesCallback(Database db, DBResultSet results, const 
  */
 void WriteItemAttributes(const char[] itemName, const char[] attrs, Function callback = INVALID_FUNCTION, Handle plugin = null, any data = 0)
 {
-	Handle pack = CreateDataPack();
-	WritePackFunction(pack, callback);
-	WritePackCell(pack, plugin);
-	WritePackCell(pack, data);
+	DataPack pack = new DataPack();
+	pack.WriteFunction(callback);
+	pack.WriteCell(plugin);
+	pack.WriteCell(data);
 
 	int itemNameLength = 2*strlen(itemName)+1;
 	char[] itemNameSafe = new char[itemNameLength];
-	SQL_EscapeString(g_hSQL, itemName, itemNameSafe, itemNameLength);
+	g_hSQL.Escape(itemName, itemNameSafe, itemNameLength);
 
 	int attrsLength = 10 * 1024;
 	char[] attrsSafe = new char[2*attrsLength+1];
-	SQL_EscapeString(g_hSQL, attrs, attrsSafe, 2*attrsLength+1);
+	g_hSQL.Escape(attrs, attrsSafe, 2*attrsLength+1);
 	
 	char[] query = new char[attrsLength + 256];
-	Format(query, attrsLength + 256, "UPDATE store_items SET attrs = '%s}' WHERE name = '%s'", attrsSafe, itemNameSafe);	
+	g_hSQL.Format(query, attrsLength + 256, "UPDATE store_items SET attrs = '%s}' WHERE name = '%s'", attrsSafe, itemNameSafe);	
 
-	SQL_TQuery(g_hSQL, T_WriteItemAttributesCallback, query, pack);	
+	g_hSQL.Query(T_WriteItemAttributesCallback, query, pack);	
 }
 
 public void T_WriteItemAttributesCallback(Database db, DBResultSet results, const char[] error, DataPack pack)
 {
 	if (results == null)
 	{
-		CloseHandle(pack);
+		delete pack;
 			
 		Store_LogError("SQL Error on WriteItemAttributes: %s", error);
 		return;
 	}
 	
-	ResetPack(pack);
+	pack.Reset();
 
-	Function callback = ReadPackFunction(pack);
-	Handle plugin = ReadPackCell(pack);
-	int arg = ReadPackCell(pack);
+	Function callback = pack.ReadFunction();
+	Handle plugin = pack.ReadCell();
+	int arg = pack.ReadCell();
 	
-	CloseHandle(pack);
+	delete pack;
 
 	if (callback != INVALID_FUNCTION)
 	{
@@ -666,7 +662,7 @@ public void T_WriteItemAttributesCallback(Database db, DBResultSet results, cons
  *
  * @noreturn
  */
-void GetLoadouts(Handle filter, Function callback = INVALID_FUNCTION, Handle plugin = null, bool loadFromCache = true, any data = 0)
+void GetLoadouts(StringMap filter, Function callback = INVALID_FUNCTION, Handle plugin = null, bool loadFromCache = true, any data = 0)
 {
 	if (loadFromCache && g_loadoutCount != -1)
 	{
@@ -677,15 +673,15 @@ void GetLoadouts(Handle filter, Function callback = INVALID_FUNCTION, Handle plu
 		int count = 0;
 		
 		char game[32];
-		bool gameFilter = filter == null ? false : GetTrieString(filter, "game", game, sizeof(game));
+		bool gameFilter = filter == null ? false : filter.GetString("game", game, sizeof(game));
 		
 		char class[32];
-		bool classFilter = filter == null ? false : GetTrieString(filter, "class", class, sizeof(class));
+		bool classFilter = filter == null ? false : filter.GetString("class", class, sizeof(class));
 		
 		// int team = -1;
-		// bool teamFilter = filter == null ? false : GetTrieValue(filter, "team", team);
+		// bool teamFilter = filter == null ? false : filter.GetValue("team", team);
 		
-		CloseHandle(filter);
+		delete filter;
 		
 		for (int loadout = 0; loadout < g_loadoutCount; loadout++)
 		{	
@@ -708,13 +704,13 @@ void GetLoadouts(Handle filter, Function callback = INVALID_FUNCTION, Handle plu
 	}
 	else
 	{
-		Handle pack = CreateDataPack();
-		WritePackCell(pack, filter);
-		WritePackFunction(pack, callback);
-		WritePackCell(pack, plugin);
-		WritePackCell(pack, data);
+		DataPack pack = new DataPack();
+		pack.WriteCell(filter);
+		pack.WriteFunction(callback);
+		pack.WriteCell(plugin);
+		pack.WriteCell(data);
 	
-		SQL_TQuery(g_hSQL, T_GetLoadoutsCallback, "SELECT id, display_name, game, class, team FROM store_loadouts", pack);
+		g_hSQL.Query(T_GetLoadoutsCallback, "SELECT id, display_name, game, class, team FROM store_loadouts", pack);
 	}
 }
 
@@ -722,34 +718,34 @@ public void T_GetLoadoutsCallback(Database db, DBResultSet results, const char[]
 {
 	if (results == null)
 	{
-		CloseHandle(pack);
+		delete pack;
 		
 		Store_LogError("SQL Error on GetLoadouts: %s", error);
 		return;
 	}
 	
-	ResetPack(pack);
+	pack.Reset();
 	
-	Handle filter = ReadPackCell(pack);
-	Function callback = ReadPackFunction(pack);
-	Handle plugin = ReadPackCell(pack);
-	int arg = ReadPackCell(pack);
+	StringMap filter = pack.ReadCell();
+	Function callback = pack.ReadFunction();
+	Handle plugin = pack.ReadCell();
+	int arg = pack.ReadCell();
 	
-	CloseHandle(pack);
+	delete pack;
 	
 	g_loadoutCount = 0;
 	
-	while (SQL_FetchRow(results))
+	while (results.FetchRow())
 	{
-		g_loadouts[g_loadoutCount].LoadoutId = SQL_FetchInt(results, 0);
-		SQL_FetchString(results, 1, g_loadouts[g_loadoutCount].LoadoutDisplayName, STORE_MAX_DISPLAY_NAME_LENGTH);
-		SQL_FetchString(results, 2, g_loadouts[g_loadoutCount].LoadoutGame, STORE_MAX_LOADOUTGAME_LENGTH);
-		SQL_FetchString(results, 3, g_loadouts[g_loadoutCount].LoadoutClass, STORE_MAX_LOADOUTCLASS_LENGTH);
+		g_loadouts[g_loadoutCount].LoadoutId = results.FetchInt(0);
+		results.FetchString(1, g_loadouts[g_loadoutCount].LoadoutDisplayName, STORE_MAX_DISPLAY_NAME_LENGTH);
+		results.FetchString(2, g_loadouts[g_loadoutCount].LoadoutGame, STORE_MAX_LOADOUTGAME_LENGTH);
+		results.FetchString(3, g_loadouts[g_loadoutCount].LoadoutClass, STORE_MAX_LOADOUTCLASS_LENGTH);
 		
-		if (SQL_IsFieldNull(results, 4))
+		if (results.IsFieldNull(4))
 			g_loadouts[g_loadoutCount].LoadoutTeam = -1;
 		else
-			g_loadouts[g_loadoutCount].LoadoutTeam = SQL_FetchInt(results, 4);
+			g_loadouts[g_loadoutCount].LoadoutTeam = results.FetchInt(4);
 		
 		g_loadoutCount++;
 	}
@@ -809,15 +805,15 @@ int GetLoadoutIndex(int id)
  *
  * @noreturn
  */
-void GetUserItems(Handle filter, int accountId, int loadoutId, Function callback = INVALID_FUNCTION, Handle plugin = null, any data = 0)
+void GetUserItems(StringMap filter, int accountId, int loadoutId, Function callback = INVALID_FUNCTION, Handle plugin = null, any data = 0)
 {
-	Handle pack = CreateDataPack();
-	WritePackCell(pack, filter); // 0 
-	WritePackCell(pack, accountId); // 8
-	WritePackCell(pack, loadoutId);	// 16
-	WritePackFunction(pack, callback); // 24
-	WritePackCell(pack, plugin); // 32
-	WritePackCell(pack, data); // 40
+	DataPack pack = new DataPack();
+	pack.WriteCell(filter); // 0 
+	pack.WriteCell(accountId); // 8
+	pack.WriteCell(loadoutId);	// 16
+	pack.WriteFunction(callback); // 24
+	pack.WriteCell(plugin); // 32
+	pack.WriteCell(data); // 40
 	
 	if (g_itemCount == -1)
 	{
@@ -831,19 +827,19 @@ void GetUserItems(Handle filter, int accountId, int loadoutId, Function callback
 	Format(query, sizeof(query), "SELECT item_id, EXISTS(SELECT * FROM store_users_items_loadouts WHERE store_users_items_loadouts.useritem_id = store_users_items.id AND store_users_items_loadouts.loadout_id = %d) AS equipped, COUNT(*) AS count FROM store_users_items INNER JOIN store_users ON store_users.id = store_users_items.user_id INNER JOIN store_items ON store_items.id = store_users_items.item_id WHERE store_users.auth = %d AND ((store_users_items.acquire_date IS NULL OR store_items.expiry_time IS NULL OR store_items.expiry_time = 0) OR (store_users_items.acquire_date IS NOT NULL AND store_items.expiry_time IS NOT NULL AND store_items.expiry_time <> 0 AND DATE_ADD(store_users_items.acquire_date, INTERVAL store_items.expiry_time SECOND) > NOW()))", loadoutId, accountId);
 
 	int categoryId;
-	if (GetTrieValue(filter, "category_id", categoryId))
+	if (filter.GetValue("category_id", categoryId))
 		Format(query, sizeof(query), "%s AND store_items.category_id = %d", query, categoryId);
 
 	bool isBuyable;
-	if (GetTrieValue(filter, "is_buyable", isBuyable))
+	if (filter.GetValue("is_buyable", isBuyable))
 		Format(query, sizeof(query), "%s AND store_items.is_buyable = %b", query, isBuyable);
 
 	bool isTradeable;
-	if (GetTrieValue(filter, "is_tradeable", isTradeable))
+	if (filter.GetValue("is_tradeable", isTradeable))
 		Format(query, sizeof(query), "%s AND store_items.is_tradeable = %b", query, isTradeable);
 
 	bool isRefundable;
-	if (GetTrieValue(filter, "is_refundable", isRefundable))
+	if (filter.GetValue("is_refundable", isRefundable))
 		Format(query, sizeof(query), "%s AND store_items.is_refundable = %b", query, isRefundable);
 			
 	char type[STORE_MAX_TYPE_LENGTH];
@@ -852,30 +848,30 @@ void GetUserItems(Handle filter, int accountId, int loadoutId, Function callback
 		int typeLength = 2*strlen(type)+1;
 
 		char[] buffer = new char[typeLength];
-		SQL_EscapeString(g_hSQL, type, buffer, typeLength);
+		g_hSQL.Escape(type, buffer, typeLength);
 
 		Format(query, sizeof(query), "%s AND store_items.type = '%s'", query, buffer);
 	}
 
 	Format(query, sizeof(query), "%s GROUP BY item_id", query);
 
-	CloseHandle(filter);
+	delete filter;
 
-	SQL_TQuery(g_hSQL, T_GetUserItemsCallback, query, pack, DBPrio_High);
+	g_hSQL.Query(T_GetUserItemsCallback, query, pack, DBPrio_High);
 }
 
 public void GetUserItemsLoadCallback(int[] ids, int count, DataPack pack)
 {
-	ResetPack(pack);
+	pack.Reset();
 	
-	Handle filter = ReadPackCell(pack);
-	int accountId = ReadPackCell(pack);  
-	int loadoutId = ReadPackCell(pack); 
-	Function callback = ReadPackFunction(pack);
-	Handle plugin = ReadPackCell(pack); 
-	int arg = ReadPackCell(pack); 
+	StringMap filter = pack.ReadCell();
+	int accountId = pack.ReadCell();  
+	int loadoutId = pack.ReadCell(); 
+	Function callback = pack.ReadFunction();
+	Handle plugin = pack.ReadCell(); 
+	int arg = pack.ReadCell(); 
 	
-	CloseHandle(pack);
+	delete pack;
 	
 	GetUserItems(filter, accountId, loadoutId, callback, plugin, arg);
 }
@@ -884,20 +880,20 @@ public void T_GetUserItemsCallback(Database db, DBResultSet results, const char[
 {
 	if (results == null)
 	{
-		CloseHandle(pack);
+		delete pack;
 		
 		Store_LogError("SQL Error on GetUserItems: %s", error);
 		return;
 	}
 	
-	SetPackPosition(pack, view_as<DataPackPos>(16));	
+	pack.Position = view_as<DataPackPos>(16);	
 
-	int loadoutId = ReadPackCell(pack);	
-	Function callback = ReadPackFunction(pack);
-	Handle plugin = ReadPackCell(pack);
-	int arg = ReadPackCell(pack);
+	int loadoutId = pack.ReadCell();	
+	Function callback = pack.ReadFunction();
+	Handle plugin = pack.ReadCell();
+	int arg = pack.ReadCell();
 	
-	CloseHandle(pack);
+	delete pack;
 	
 	int count = SQL_GetRowCount(results);
 
@@ -906,11 +902,11 @@ public void T_GetUserItemsCallback(Database db, DBResultSet results, const char[
 	int[] itemCount = new int[count];
 	
 	int index = 0;
-	while (SQL_FetchRow(results))
+	while (results.FetchRow())
 	{
-		ids[index] = SQL_FetchInt(results, 0);
-		equipped[index] = view_as<bool>(SQL_FetchInt(results, 1));
-		itemCount[index] = SQL_FetchInt(results, 2);
+		ids[index] = results.FetchInt(0);
+		equipped[index] = view_as<bool>(results.FetchInt(1));
+		itemCount[index] = results.FetchInt(2);
 		
 		index++;
 	}
@@ -940,44 +936,44 @@ public void T_GetUserItemsCallback(Database db, DBResultSet results, const char[
  */
 void GetUserItemCount(int accountId, const char[] itemName, Function callback = INVALID_FUNCTION, Handle plugin = null, any data = 0)
 {
-	Handle pack = CreateDataPack();
-	WritePackFunction(pack, callback);
-	WritePackCell(pack, plugin);
-	WritePackCell(pack, data);
+	DataPack pack = new DataPack();
+	pack.WriteFunction(callback);
+	pack.WriteCell(plugin);
+	pack.WriteCell(data);
 
 	int itemNameLength = 2*strlen(itemName)+1;
 
 	char[] itemNameSafe = new char[itemNameLength];
-	SQL_EscapeString(g_hSQL, itemName, itemNameSafe, itemNameLength);
+	g_hSQL.Escape(itemName, itemNameSafe, itemNameLength);
 
 	char query[512];
-	Format(query, sizeof(query), "SELECT COUNT(*) AS count FROM store_users_items INNER JOIN store_users ON store_users.id = store_users_items.user_id INNER JOIN store_items ON store_items.id = store_users_items.item_id WHERE store_items.name = '%s' AND store_users.auth = %d", itemNameSafe, accountId);
+	g_hSQL.Format(query, sizeof(query), "SELECT COUNT(*) AS count FROM store_users_items INNER JOIN store_users ON store_users.id = store_users_items.user_id INNER JOIN store_items ON store_items.id = store_users_items.item_id WHERE store_items.name = '%s' AND store_users.auth = %d", itemNameSafe, accountId);
 
-	SQL_TQuery(g_hSQL, T_GetUserItemCountCallback, query, pack, DBPrio_High);
+	g_hSQL.Query(T_GetUserItemCountCallback, query, pack, DBPrio_High);
 }
 
 public void T_GetUserItemCountCallback(Database db, DBResultSet results, const char[] error, DataPack pack)
 {
 	if (results == null)
 	{
-		CloseHandle(pack);
+		delete pack;
 		
 		Store_LogError("SQL Error on GetUserItemCount: %s", error);
 		return;
 	}
 	
-	ResetPack(pack);
+	pack.Reset();
 	
-	Function callback = ReadPackFunction(pack);
-	Handle plugin = ReadPackCell(pack);
-	int arg = ReadPackCell(pack);
+	Function callback = pack.ReadFunction();
+	Handle plugin = pack.ReadCell();
+	int arg = pack.ReadCell();
 
-	CloseHandle(pack);
+	delete pack;
 	
-	if (SQL_FetchRow(results))
+	if (results.FetchRow())
 	{
 		Call_StartFunction(plugin, callback);
-		Call_PushCell(SQL_FetchInt(results, 0));
+		Call_PushCell(results.FetchInt(0));
 		Call_PushCell(arg);
 		Call_Finish();	
 	}
@@ -997,39 +993,39 @@ public void T_GetUserItemCountCallback(Database db, DBResultSet results, const c
  */
 void GetCredits(int accountId, Function callback = INVALID_FUNCTION, Handle plugin = null, any data = 0)
 {
-	Handle pack = CreateDataPack();
-	WritePackFunction(pack, callback);
-	WritePackCell(pack, plugin);
-	WritePackCell(pack, data);
+	DataPack pack = new DataPack();
+	pack.WriteFunction(callback);
+	pack.WriteCell(plugin);
+	pack.WriteCell(data);
 		
 	char query[255];
-	Format(query, sizeof(query), "SELECT credits FROM store_users WHERE auth = %d", accountId);
+	g_hSQL.Format(query, sizeof(query), "SELECT credits FROM store_users WHERE auth = %d", accountId);
 
-	SQL_TQuery(g_hSQL, T_GetCreditsCallback, query, pack, DBPrio_High);
+	g_hSQL.Query(T_GetCreditsCallback, query, pack, DBPrio_High);
 }
 
 public void T_GetCreditsCallback(Database db, DBResultSet results, const char[] error, DataPack pack)
 {
 	if (results == null)
 	{
-		CloseHandle(pack);
+		delete pack;
 		
 		Store_LogError("SQL Error on GetCredits: %s", error);
 		return;
 	}
 	
-	ResetPack(pack);
+	pack.Reset();
 	
-	Function callback = ReadPackFunction(pack);
-	Handle plugin = ReadPackCell(pack);
-	int arg = ReadPackCell(pack);
+	Function callback = pack.ReadFunction();
+	Handle plugin = pack.ReadCell();
+	int arg = pack.ReadCell();
 	
-	CloseHandle(pack);
+	delete pack;
 	
-	if (SQL_FetchRow(results))
+	if (results.FetchRow())
 	{
 		Call_StartFunction(plugin, callback);
-		Call_PushCell(SQL_FetchInt(results, 0));
+		Call_PushCell(results.FetchInt(0));
 		Call_PushCell(arg);
 		Call_Finish();	
 	}
@@ -1054,25 +1050,25 @@ public void T_GetCreditsCallback(Database db, DBResultSet results, const char[] 
  */
 void BuyItem(int accountId, int itemId, Function callback = INVALID_FUNCTION, Handle plugin = null, any data = 0)
 {
-	Handle pack = CreateDataPack();
-	WritePackCell(pack, itemId); // 0
-	WritePackCell(pack, accountId); // 8
-	WritePackFunction(pack, callback); // 16
-	WritePackCell(pack, plugin); // 24
-	WritePackCell(pack, data); // 32
+	DataPack pack = new DataPack();
+	pack.WriteCell(itemId); // 0
+	pack.WriteCell(accountId); // 8
+	pack.WriteFunction(callback); // 16
+	pack.WriteCell(plugin); // 24
+	pack.WriteCell(data); // 32
 	
 	GetCredits(accountId, T_BuyItemGetCreditsCallback, null, pack);
 }
 
 public void T_BuyItemGetCreditsCallback(int credits, DataPack pack)
 {
-	ResetPack(pack);
+	pack.Reset();
 	
-	int itemId = ReadPackCell(pack); 
-	int accountId = ReadPackCell(pack); 
-	Function callback = ReadPackFunction(pack);
-	Handle plugin = ReadPackCell(pack);
-	int arg = ReadPackCell(pack);
+	int itemId = pack.ReadCell(); 
+	int accountId = pack.ReadCell(); 
+	Function callback = pack.ReadFunction();
+	Handle plugin = pack.ReadCell();
+	int arg = pack.ReadCell();
 	
 	if (credits < g_items[GetItemIndex(itemId)].ItemPrice)
 	{
@@ -1089,21 +1085,21 @@ public void T_BuyItemGetCreditsCallback(int credits, DataPack pack)
 
 public void BuyItemGiveCreditsCallback(int accountId, DataPack pack)
 {
-	ResetPack(pack);
+	pack.Reset();
 	
-	int itemId = ReadPackCell(pack);
+	int itemId = pack.ReadCell();
 	GiveItem(accountId, itemId, Store_Shop, BuyItemGiveItemCallback, _, pack);
 }
 
 public void BuyItemGiveItemCallback(int accountId, DataPack pack)
 {
-	SetPackPosition(pack, view_as<DataPackPos>(16));
+	pack.Position = view_as<DataPackPos>(16);
 	
-	Function callback = ReadPackFunction(pack);
-	Handle plugin = ReadPackCell(pack);
-	int arg = ReadPackCell(pack);
+	Function callback = pack.ReadFunction();
+	Handle plugin = pack.ReadCell();
+	int arg = pack.ReadCell();
 	
-	CloseHandle(pack);
+	delete pack;
 	
 	Call_StartFunction(plugin, callback);
 	Call_PushCell(1);
@@ -1126,12 +1122,12 @@ public void BuyItemGiveItemCallback(int accountId, DataPack pack)
  */
 void RemoveUserItem(int accountId, int itemId, Function callback = INVALID_FUNCTION, Handle plugin = null, any data = 0)
 {
-	Handle pack = CreateDataPack();
-	WritePackCell(pack, accountId); // 0
-	WritePackCell(pack, itemId); // 8
-	WritePackFunction(pack, callback); // 16
-	WritePackCell(pack, plugin);
-	WritePackCell(pack, data);
+	DataPack pack = new DataPack();
+	pack.WriteCell(accountId); // 0
+	pack.WriteCell(itemId); // 8
+	pack.WriteFunction(callback); // 16
+	pack.WriteCell(plugin);
+	pack.WriteCell(data);
 	
 	UnequipItem(accountId, itemId, -1, RemoveUserItemUnnequipCallback, _, pack);
 }
@@ -1139,30 +1135,30 @@ void RemoveUserItem(int accountId, int itemId, Function callback = INVALID_FUNCT
 public void RemoveUserItemUnnequipCallback(int accountId, int itemId, int loadoutId, DataPack pack)
 {
 	char query[255];
-	Format(query, sizeof(query), "DELETE FROM store_users_items WHERE store_users_items.item_id = %d AND store_users_items.user_id IN (SELECT store_users.id FROM store_users WHERE store_users.auth = %d) LIMIT 1", itemId, accountId);
+	g_hSQL.Format(query, sizeof(query), "DELETE FROM store_users_items WHERE store_users_items.item_id = %d AND store_users_items.user_id IN (SELECT store_users.id FROM store_users WHERE store_users.auth = %d) LIMIT 1", itemId, accountId);
 	
-	SQL_TQuery(g_hSQL, T_RemoveUserItemCallback, query, pack, DBPrio_High);	
+	g_hSQL.Query(T_RemoveUserItemCallback, query, pack, DBPrio_High);	
 }
 
 public void T_RemoveUserItemCallback(Database db, DBResultSet results, const char[] error, DataPack pack)
 {
 	if (results == null)
 	{
-		CloseHandle(pack);
+		delete pack;
 		
 		Store_LogError("SQL Error on UseItem: %s", error);
 		return;
 	}
 	
-	ResetPack(pack);
+	pack.Reset();
 		
-	int accountId = ReadPackCell(pack);
-	int itemId = ReadPackCell(pack);
-	Function callback = ReadPackFunction(pack);
-	Handle plugin = ReadPackCell(pack);
-	int arg = ReadPackCell(pack);
+	int accountId = pack.ReadCell();
+	int itemId = pack.ReadCell();
+	Function callback = pack.ReadFunction();
+	Handle plugin = pack.ReadCell();
+	int arg = pack.ReadCell();
 	
-	CloseHandle(pack);
+	delete pack;
 	
 	Call_StartFunction(plugin, callback);
 	Call_PushCell(accountId);
@@ -1213,13 +1209,13 @@ void SetItemEquippedState(int accountId, int itemId, int loadoutId, bool isEquip
  */
 void EquipItem(int accountId, int itemId, int loadoutId, Function callback = INVALID_FUNCTION, Handle plugin = null, any data = 0)
 {
-	Handle pack = CreateDataPack();
-	WritePackCell(pack, accountId);
-	WritePackCell(pack, itemId);
-	WritePackCell(pack, loadoutId);	
-	WritePackFunction(pack, callback);
-	WritePackCell(pack, plugin);
-	WritePackCell(pack, data);
+	DataPack pack = new DataPack();
+	pack.WriteCell(accountId);
+	pack.WriteCell(itemId);
+	pack.WriteCell(loadoutId);	
+	pack.WriteFunction(callback);
+	pack.WriteCell(plugin);
+	pack.WriteCell(data);
 	
 	UnequipItem(accountId, itemId, loadoutId, EquipUnequipItemCallback, _, pack);
 }
@@ -1227,31 +1223,31 @@ void EquipItem(int accountId, int itemId, int loadoutId, Function callback = INV
 public void EquipUnequipItemCallback(int accountId, int itemId, int loadoutId, DataPack pack)
 {
 	char query[512];
-	Format(query, sizeof(query), "INSERT INTO store_users_items_loadouts (loadout_id, useritem_id) SELECT %d AS loadout_id, store_users_items.id FROM store_users_items INNER JOIN store_users ON store_users.id = store_users_items.user_id WHERE store_users.auth = %d AND store_users_items.item_id = %d LIMIT 1", loadoutId, accountId, itemId);
+	g_hSQL.Format(query, sizeof(query), "INSERT INTO store_users_items_loadouts (loadout_id, useritem_id) SELECT %d AS loadout_id, store_users_items.id FROM store_users_items INNER JOIN store_users ON store_users.id = store_users_items.user_id WHERE store_users.auth = %d AND store_users_items.item_id = %d LIMIT 1", loadoutId, accountId, itemId);
 	
-	SQL_TQuery(g_hSQL, T_EquipItemCallback, query, pack, DBPrio_High);	
+	g_hSQL.Query(T_EquipItemCallback, query, pack, DBPrio_High);	
 }
 
 public void T_EquipItemCallback(Database db, DBResultSet results, const char[] error, DataPack pack)
 {
 	if (results == null)
 	{
-		CloseHandle(pack);
+		delete pack;
 		
 		Store_LogError("SQL Error on EquipItem: %s", error);
 		return;
 	}
 	
-	ResetPack(pack);
+	pack.Reset();
 	
-	int accountId = ReadPackCell(pack);
-	int itemId = ReadPackCell(pack);
-	int loadoutId = ReadPackCell(pack);
-	Function callback = ReadPackFunction(pack);
-	Handle plugin = ReadPackCell(pack);
-	int arg = ReadPackCell(pack);
+	int accountId = pack.ReadCell();
+	int itemId = pack.ReadCell();
+	int loadoutId = pack.ReadCell();
+	Function callback = pack.ReadFunction();
+	Handle plugin = pack.ReadCell();
+	int arg = pack.ReadCell();
 	
-	CloseHandle(pack);
+	delete pack;
 	
 	Call_StartFunction(plugin, callback);
 	Call_PushCell(accountId);
@@ -1279,13 +1275,13 @@ public void T_EquipItemCallback(Database db, DBResultSet results, const char[] e
  */
 void UnequipItem(int accountId, int itemId, int loadoutId, Function callback = INVALID_FUNCTION, Handle plugin = null, any data = 0)
 {
-	Handle pack = CreateDataPack();
-	WritePackCell(pack, accountId);
-	WritePackCell(pack, itemId);
-	WritePackCell(pack, loadoutId);
-	WritePackFunction(pack, callback);
-	WritePackCell(pack, plugin);
-	WritePackCell(pack, data);
+	DataPack pack = new DataPack();
+	pack.WriteCell(accountId);
+	pack.WriteCell(itemId);
+	pack.WriteCell(loadoutId);
+	pack.WriteFunction(callback);
+	pack.WriteCell(plugin);
+	pack.WriteCell(data);
 	
 	char query[512];
 	Format(query, sizeof(query), "DELETE store_users_items_loadouts FROM store_users_items_loadouts INNER JOIN store_users_items ON store_users_items.id = store_users_items_loadouts.useritem_id INNER JOIN store_users ON store_users.id = store_users_items.user_id INNER JOIN store_items ON store_items.id = store_users_items.item_id WHERE store_users.auth = %d AND store_items.loadout_slot = (SELECT loadout_slot from store_items WHERE store_items.id = %d)", accountId, itemId);
@@ -1295,29 +1291,29 @@ void UnequipItem(int accountId, int itemId, int loadoutId, Function callback = I
 		Format(query, sizeof(query), "%s AND store_users_items_loadouts.loadout_id = %d", query, loadoutId);
 	}
 
-	SQL_TQuery(g_hSQL, T_UnequipItemCallback, query, pack, DBPrio_High);	
+	g_hSQL.Query(T_UnequipItemCallback, query, pack, DBPrio_High);	
 }
 
 public void T_UnequipItemCallback(Database db, DBResultSet results, const char[] error, DataPack pack)
 {
 	if (results == null)
 	{
-		CloseHandle(pack);
+		delete pack;
 		
 		Store_LogError("SQL Error on UnequipItem: %s", error);
 		return;
 	}
 	
-	ResetPack(pack);
+	pack.Reset();
 	
-	int accountId = ReadPackCell(pack);
-	int itemId = ReadPackCell(pack);
-	int loadoutId = ReadPackCell(pack);
-	Function callback = ReadPackFunction(pack);
-	Handle plugin = ReadPackCell(pack);
-	int arg = ReadPackCell(pack);
+	int accountId = pack.ReadCell();
+	int itemId = pack.ReadCell();
+	int loadoutId = pack.ReadCell();
+	Function callback = pack.ReadFunction();
+	Handle plugin = pack.ReadCell();
+	int arg = pack.ReadCell();
 	
-	CloseHandle(pack);
+	delete pack;
 	
 	Call_StartFunction(plugin, callback);
 	Call_PushCell(accountId);
@@ -1359,42 +1355,42 @@ public void T_UnequipItemCallback(Database db, DBResultSet results, const char[]
  */
 void GetEquippedItemsByType(int accountId, const char[] type, int loadoutId, Function callback = INVALID_FUNCTION, Handle plugin = null, any data = 0)
 {
-	Handle pack = CreateDataPack();
-	WritePackFunction(pack, callback);
-	WritePackCell(pack, plugin);
-	WritePackCell(pack, data);
+	DataPack pack = new DataPack();
+	pack.WriteFunction(callback);
+	pack.WriteCell(plugin);
+	pack.WriteCell(data);
 	
 	char query[512];
-	Format(query, sizeof(query), "SELECT store_items.id FROM store_users_items INNER JOIN store_items ON store_items.id = store_users_items.item_id INNER JOIN store_users ON store_users.id = store_users_items.user_id INNER JOIN store_users_items_loadouts ON store_users_items_loadouts.useritem_id = store_users_items.id WHERE store_users.auth = %d AND store_items.type = '%s' AND store_users_items_loadouts.loadout_id = %d", accountId, type, loadoutId);
+	g_hSQL.Format(query, sizeof(query), "SELECT store_items.id FROM store_users_items INNER JOIN store_items ON store_items.id = store_users_items.item_id INNER JOIN store_users ON store_users.id = store_users_items.user_id INNER JOIN store_users_items_loadouts ON store_users_items_loadouts.useritem_id = store_users_items.id WHERE store_users.auth = %d AND store_items.type = '%s' AND store_users_items_loadouts.loadout_id = %d", accountId, type, loadoutId);
 	
-	SQL_TQuery(g_hSQL, T_GetEquippedItemsByTypeCallback, query, pack, DBPrio_High);	
+	g_hSQL.Query(T_GetEquippedItemsByTypeCallback, query, pack, DBPrio_High);	
 }
 
 public void T_GetEquippedItemsByTypeCallback(Database db, DBResultSet results, const char[] error, DataPack pack)
 {
 	if (results == null)
 	{
-		CloseHandle(pack);
+		delete pack;
 		
 		Store_LogError("SQL Error on GetEquippedItemsByType: %s", error);
 		return;
 	}
 	
-	ResetPack(pack);
+	pack.Reset();
 	
-	Function callback = ReadPackFunction(pack);
-	Handle plugin = ReadPackCell(pack);
-	int arg = ReadPackCell(pack);
+	Function callback = pack.ReadFunction();
+	Handle plugin = pack.ReadCell();
+	int arg = pack.ReadCell();
 	
-	CloseHandle(pack);
+	delete pack;
 	
-	int count = SQL_GetRowCount(results);
+	int count = results.RowCount;
 	int[] ids = new int[count];
 	
 	int index = 0;
-	while (SQL_FetchRow(results))
+	while (results.FetchRow())
 	{
-		ids[index] = SQL_FetchInt(results, 0);
+		ids[index] = results.FetchInt(0);
 		index++;
 	}
 	
@@ -1423,36 +1419,36 @@ public void T_GetEquippedItemsByTypeCallback(Database db, DBResultSet results, c
  */
 void GiveCredits(int accountId, int credits, Function callback = INVALID_FUNCTION, Handle plugin = null, any data = 0)
 {
-	Handle pack = CreateDataPack();
-	WritePackCell(pack, accountId);
-	WritePackFunction(pack, callback);
-	WritePackCell(pack, plugin);
-	WritePackCell(pack, data);
+	DataPack pack = new DataPack();
+	pack.WriteCell(accountId);
+	pack.WriteFunction(callback);
+	pack.WriteCell(plugin);
+	pack.WriteCell(data);
 	
 	char query[255];
 	Format(query, sizeof(query), "UPDATE store_users SET credits = credits + %d WHERE auth = %d", credits, accountId);
 
-	SQL_TQuery(g_hSQL, T_GiveCreditsCallback, query, pack);	
+	g_hSQL.Query(T_GiveCreditsCallback, query, pack);	
 }
 
 public void T_GiveCreditsCallback(Database db, DBResultSet results, const char[] error, DataPack pack)
 {
 	if (results == null)
 	{
-		CloseHandle(pack);
+		delete pack;
 		
 		Store_LogError("SQL Error on GiveCredits: %s", error);
 		return;
 	}
 	
-	ResetPack(pack);
+	pack.Reset();
 	
-	int accountId = ReadPackCell(pack);
-	Function callback = ReadPackFunction(pack);
-	Handle plugin = ReadPackCell(pack);
-	int arg = ReadPackCell(pack);
+	int accountId = pack.ReadCell();
+	Function callback = pack.ReadFunction();
+	Handle plugin = pack.ReadCell();
+	int arg = pack.ReadCell();
 	
-	CloseHandle(pack);
+	delete pack;
 	
 	if (callback != INVALID_FUNCTION) 
 	{
@@ -1479,11 +1475,11 @@ public void T_GiveCreditsCallback(Database db, DBResultSet results, const char[]
  */
 void GiveItem(int accountId, int itemId, Store_AcquireMethod acquireMethod = Store_Unknown, Function callback = INVALID_FUNCTION, Handle plugin = null, any data = 0)
 {
-	Handle pack = CreateDataPack();
-	WritePackCell(pack, accountId);
-	WritePackFunction(pack, callback);
-	WritePackCell(pack, plugin);
-	WritePackCell(pack, data);
+	DataPack pack = new DataPack();
+	pack.WriteCell(accountId);
+	pack.WriteFunction(callback);
+	pack.WriteCell(plugin);
+	pack.WriteCell(data);
 
 	char query[255];
 	Format(query, sizeof(query), "INSERT INTO store_users_items (user_id, item_id, acquire_date, acquire_method) SELECT store_users.id AS userId, '%d' AS item_id, NOW() as acquire_date, ", itemId);
@@ -1503,27 +1499,27 @@ void GiveItem(int accountId, int itemId, Store_AcquireMethod acquireMethod = Sto
 
 	Format(query, sizeof(query), "%s AS acquire_method FROM store_users WHERE auth = %d", query, accountId);
 
-	SQL_TQuery(g_hSQL, T_GiveItemCallback, query, pack, DBPrio_High);	
+	g_hSQL.Query(T_GiveItemCallback, query, pack, DBPrio_High);	
 }
 
 public void T_GiveItemCallback(Database db, DBResultSet results, const char[] error, DataPack pack)
 {
 	if (results == null)
 	{
-		CloseHandle(pack);
+		delete pack;
 		
 		Store_LogError("SQL Error on GiveItem: %s", error);
 		return;
 	}
 	
-	ResetPack(pack);
+	pack.Reset();
 	
-	int accountId = ReadPackCell(pack);
-	Function callback = ReadPackFunction(pack);
-	Handle plugin = ReadPackCell(pack);
-	int arg = ReadPackCell(pack);
+	int accountId = pack.ReadCell();
+	Function callback = pack.ReadFunction();
+	Handle plugin = pack.ReadCell();
+	int arg = pack.ReadCell();
 	
-	CloseHandle(pack);
+	delete pack;
 	
 	if (callback != INVALID_FUNCTION) 
 	{
@@ -1566,7 +1562,7 @@ void GiveCreditsToUsers(int [] accountIds, int accountIdsLength, int credits)
 
 	Format(query, sizeof(query), "%s)", query);	
 	
-	SQL_TQuery(g_hSQL, T_GiveCreditsToUsersCallback, query);	
+	g_hSQL.Query(T_GiveCreditsToUsersCallback, query);	
 }
 
 public void T_GiveCreditsToUsersCallback(Database db, DBResultSet results, const char[] error, any data)
@@ -1617,7 +1613,7 @@ void GiveDifferentCreditsToUsers(int[] accountIds, int accountIdsLength, int[] c
 
 	Format(query, sizeof(query), "%s)", query);	
 	
-	SQL_TQuery(g_hSQL, T_GiveDifferentCreditsToUsersCallback, query);	
+	g_hSQL.Query(T_GiveDifferentCreditsToUsersCallback, query);	
 }
 
 public void T_GiveDifferentCreditsToUsersCallback(Database db, DBResultSet results, const char[] error, any data)
@@ -1643,14 +1639,11 @@ void ReloadItemCache()
 
 void ConnectSQL()
 {
-	if (g_hSQL != null)
-		CloseHandle(g_hSQL);
-	
-	g_hSQL = null;
+	delete g_hSQL;
 
 	if (SQL_CheckConfig("store"))
 	{
-		SQL_TConnect(T_ConnectSQLCallback, "store");
+		Database.Connect(T_ConnectSQLCallback, "store");
 	}
 	else
 	{
@@ -1658,7 +1651,7 @@ void ConnectSQL()
 	}
 }
 
-public void T_ConnectSQLCallback(Database db, DBResultSet results, const char[] error, any data)
+public void T_ConnectSQLCallback(Database db, const char[] error, any data)
 {
 	if (g_reconnectCounter >= 5)
 	{
@@ -1666,7 +1659,7 @@ public void T_ConnectSQLCallback(Database db, DBResultSet results, const char[] 
 		return;
 	}
 
-	if (results == null)
+	if (db == null)
 	{
 		Store_LogError("Connection to SQL database has failed, Reason: %s", error);
 		
@@ -1677,17 +1670,15 @@ public void T_ConnectSQLCallback(Database db, DBResultSet results, const char[] 
 	}
 
 	char driver[16];
-	SQL_GetDriverIdent(db, driver, sizeof(driver));
+	db.Driver.GetIdentifier(driver, sizeof(driver));
 
-	g_hSQL = CloneHandle(results);		
+	g_hSQL = db;
 	
 	if (StrEqual(driver, "mysql", false))
 	{
-		SQL_FastQuery(g_hSQL, "SET NAMES  'utf8'");
+		g_hSQL.SetCharset("utf8");
 	}
-	
-	CloseHandle(results);
-	
+		
 	Call_StartForward(g_dbInitializedForward);
 	Call_Finish();
 	
@@ -1704,7 +1695,7 @@ public Action Command_ReloadItems(int client, int args)
 	return Plugin_Handled;
 }
 
-public int Native_Register(Handle plugin, int params)
+public int Native_Register(Handle plugin, int numParams)
 {
 	char name[64];
 	GetNativeString(2, name, sizeof(name));    
@@ -1713,112 +1704,112 @@ public int Native_Register(Handle plugin, int params)
 	return 0;
 }
 
-public int Native_RegisterClient(Handle plugin, int params)
+public int Native_RegisterClient(Handle plugin, int numParams)
 {
 	RegisterClient(GetNativeCell(1), GetNativeCell(2));
 	return 0;
 }
 
-public int Native_GetCategories(Handle plugin, int params)
+public int Native_GetCategories(Handle plugin, int numParams)
 {
 	any data = 0;
 	
-	if (params == 3)
+	if (numParams == 3)
 		data = GetNativeCell(3);
 		
 	GetCategories(GetNativeFunction(1), plugin, GetNativeCell(2), data);
 	return 0;
 }
 
-public int Native_GetCategoryDisplayName(Handle plugin, int params)
+public int Native_GetCategoryDisplayName(Handle plugin, int numParams)
 {
 	SetNativeString(2, g_categories[GetCategoryIndex(GetNativeCell(1))].CategoryDisplayName, GetNativeCell(3));
 	return 0;
 }
 
-public int Native_GetCategoryDescription(Handle plugin, int params)
+public int Native_GetCategoryDescription(Handle plugin, int numParams)
 {
 	SetNativeString(2, g_categories[GetCategoryIndex(GetNativeCell(1))].CategoryDescription, GetNativeCell(3));
 	return 0;
 }
 
-public int Native_GetCategoryPluginRequired(Handle plugin, int params)
+public int Native_GetCategoryPluginRequired(Handle plugin, int numParams)
 {
 	SetNativeString(2, g_categories[GetCategoryIndex(GetNativeCell(1))].CategoryRequirePlugin, GetNativeCell(3));
 	return 0;
 }
 
-public int Native_GetItems(Handle plugin, int params)
+public int Native_GetItems(Handle plugin, int numParams)
 {
 	any data = 0;
 	
-	if (params == 4)
+	if (numParams == 4)
 		data = GetNativeCell(4);
 		
 	GetItems(GetNativeCell(1), GetNativeFunction(2), plugin, GetNativeCell(3), data);
 	return 0;
 }
 
-public int Native_GetItemName(Handle plugin, int params)
+public int Native_GetItemName(Handle plugin, int numParams)
 {
 	SetNativeString(2, g_items[GetItemIndex(GetNativeCell(1))].ItemName, GetNativeCell(3));
 	return 0;
 }
 
-public int Native_GetItemDisplayName(Handle plugin, int params)
+public int Native_GetItemDisplayName(Handle plugin, int numParams)
 {
 	SetNativeString(2, g_items[GetItemIndex(GetNativeCell(1))].ItemDisplayName, GetNativeCell(3));
 	return 0;
 }
 
-public int Native_GetItemDescription(Handle plugin, int params)
+public int Native_GetItemDescription(Handle plugin, int numParams)
 {
 	SetNativeString(2, g_items[GetItemIndex(GetNativeCell(1))].ItemDescription, GetNativeCell(3));
 	return 0;
 }
 
-public int Native_GetItemType(Handle plugin, int params)
+public int Native_GetItemType(Handle plugin, int numParams)
 {
 	SetNativeString(2, g_items[GetItemIndex(GetNativeCell(1))].ItemType, GetNativeCell(3));
 	return 0;
 }
 
-public int Native_GetItemLoadoutSlot(Handle plugin, int params)
+public int Native_GetItemLoadoutSlot(Handle plugin, int numParams)
 {
 	SetNativeString(2, g_items[GetItemIndex(GetNativeCell(1))].ItemLoadoutSlot, GetNativeCell(3));
 	return 0;
 }
 
-public int Native_GetItemPrice(Handle plugin, int params)
+public int Native_GetItemPrice(Handle plugin, int numParams)
 {
 	return g_items[GetItemIndex(GetNativeCell(1))].ItemPrice;
 }
 
-public int Native_GetItemCategory(Handle plugin, int params)
+public int Native_GetItemCategory(Handle plugin, int numParams)
 {
 	return g_items[GetItemIndex(GetNativeCell(1))].ItemCategoryId;
 }
 
-public int Native_IsItemBuyable(Handle plugin, int params)
+public int Native_IsItemBuyable(Handle plugin, int numParams)
 {
 	return g_items[GetItemIndex(GetNativeCell(1))].ItemIsBuyable;
 }
 
-public int Native_IsItemTradeable(Handle plugin, int params)
+public int Native_IsItemTradeable(Handle plugin, int numParams)
 {
 	return g_items[GetItemIndex(GetNativeCell(1))].ItemIsTradeable;
 }
 
-public int Native_IsItemRefundable(Handle plugin, int params)
+public int Native_IsItemRefundable(Handle plugin, int numParams)
 {
 	return g_items[GetItemIndex(GetNativeCell(1))].ItemIsRefundable;
 }
 
-public int Native_GetItemAttributes(Handle plugin, int params)
+public int Native_GetItemAttributes(Handle plugin, int numParams)
 {
 	any data = 0;
 	
-	if (params == 3)
+	if (numParams == 3)
 		data = GetNativeCell(3);
 	
 	char itemName[STORE_MAX_NAME_LENGTH];
@@ -1828,11 +1819,11 @@ public int Native_GetItemAttributes(Handle plugin, int params)
 	return 0;
 }
 
-public int Native_WriteItemAttributes(Handle plugin, int params)
+public int Native_WriteItemAttributes(Handle plugin, int numParams)
 {
 	any data = 0;
 	
-	if (params == 4)
+	if (numParams == 4)
 		data = GetNativeCell(4);
 	
 	char itemName[STORE_MAX_NAME_LENGTH];
@@ -1848,53 +1839,56 @@ public int Native_WriteItemAttributes(Handle plugin, int params)
 	return 0;
 }
 
-public int Native_GetLoadouts(Handle plugin, int params)
+public int Native_GetLoadouts(Handle plugin, int numParams)
 {	
-	any data = 0;    
-	if (params == 4)
+	any data = 0;
+
+	if (numParams == 4)
 		data = GetNativeCell(4);
 		
 	GetLoadouts(GetNativeCell(1), GetNativeFunction(2), plugin, GetNativeCell(3), data);
 	return 0;
 }
 
-public int Native_GetLoadoutDisplayName(Handle plugin, int params)
+public int Native_GetLoadoutDisplayName(Handle plugin, int numParams)
 {
 	SetNativeString(2, g_loadouts[GetLoadoutIndex(GetNativeCell(1))].LoadoutDisplayName, GetNativeCell(3));
 	return 0;
 }
 
-public int Native_GetLoadoutGame(Handle plugin, int params)
+public int Native_GetLoadoutGame(Handle plugin, int numParams)
 {
 	SetNativeString(2, g_loadouts[GetLoadoutIndex(GetNativeCell(1))].LoadoutGame, GetNativeCell(3));
 	return 0;
 }
 
-public int Native_GetLoadoutClass(Handle plugin, int params)
+public int Native_GetLoadoutClass(Handle plugin, int numParams)
 {
 	SetNativeString(2, g_loadouts[GetLoadoutIndex(GetNativeCell(1))].LoadoutClass, GetNativeCell(3));
 	return 0;
 }
 
-public int Native_GetLoadoutTeam(Handle plugin, int params)
+public int Native_GetLoadoutTeam(Handle plugin, int numParams)
 {
 	return g_loadouts[GetLoadoutIndex(GetNativeCell(1))].LoadoutTeam;
 }
 
-public int Native_GetUserItems(Handle plugin, int params)
+public int Native_GetUserItems(Handle plugin, int numParams)
 {
 	any data = 0;
-	if (params == 5)
+
+	if (numParams == 5)
 		data = GetNativeCell(5);
 		
 	GetUserItems(GetNativeCell(1), GetNativeCell(2), GetNativeCell(3), GetNativeFunction(4), plugin, data);
 	return 0;
 }
 
-public int Native_GetUserItemCount(Handle plugin, int params)
+public int Native_GetUserItemCount(Handle plugin, int numParams)
 {
 	any data = 0;
-	if (params == 4)
+
+	if (numParams == 4)
 		data = GetNativeCell(4);
 
 	char itemName[STORE_MAX_NAME_LENGTH];
@@ -1904,75 +1898,76 @@ public int Native_GetUserItemCount(Handle plugin, int params)
 	return 0;
 }
 
-public int Native_GetCredits(Handle plugin, int params)
+public int Native_GetCredits(Handle plugin, int numParams)
 {
 	any data = 0;
-	if (params == 3)
+
+	if (numParams == 3)
 		data = GetNativeCell(3);
 		
 	GetCredits(GetNativeCell(1), GetNativeFunction(2), plugin, data);
 	return 0;
 }
 
-public int Native_BuyItem(Handle plugin, int params)
+public int Native_BuyItem(Handle plugin, int numParams)
 {	
 	any data = 0;
 	
-	if (params == 4)
+	if (numParams == 4)
 		data = GetNativeCell(4);
 
 	BuyItem(GetNativeCell(1), GetNativeCell(2), GetNativeFunction(3), plugin, data);
 	return 0;
 }
 
-public int Native_RemoveUserItem(Handle plugin, int params)
+public int Native_RemoveUserItem(Handle plugin, int numParams)
 {
 	any data = 0;
 	
-	if (params == 4)
+	if (numParams == 4)
 		data = GetNativeCell(4);
 
 	RemoveUserItem(GetNativeCell(1), GetNativeCell(2), GetNativeFunction(3), plugin, data);
 	return 0;
 }
 
-public int Native_SetItemEquippedState(Handle plugin, int params)
+public int Native_SetItemEquippedState(Handle plugin, int numParams)
 {
 	any data = 0;
 	
-	if (params == 6)
+	if (numParams == 6)
 		data = GetNativeCell(6);
 
 	SetItemEquippedState(GetNativeCell(1), GetNativeCell(2), GetNativeCell(3), GetNativeCell(4), GetNativeFunction(5), plugin, data);
 	return 0;
 }
 
-public int Native_GetEquippedItemsByType(Handle plugin, int params)
+public int Native_GetEquippedItemsByType(Handle plugin, int numParams)
 {	
 	char type[32];
 	GetNativeString(2, type, sizeof(type)); 
 	
 	any data = 0;
 	
-	if (params == 5)
+	if (numParams == 5)
 		data = GetNativeCell(5);
 
 	GetEquippedItemsByType(GetNativeCell(1), type, GetNativeCell(3), GetNativeFunction(4), plugin, data);
 	return 0;
 }
 
-public int Native_GiveCredits(Handle plugin, int params)
+public int Native_GiveCredits(Handle plugin, int numParams)
 {
 	any data = 0;
 	
-	if (params == 4)
+	if (numParams == 4)
 		data = GetNativeCell(4);
 		
 	GiveCredits(GetNativeCell(1), GetNativeCell(2), GetNativeFunction(3), plugin, data);
 	return 0;
 }
 
-public int Native_GiveCreditsToUsers(Handle plugin, int params)
+public int Native_GiveCreditsToUsers(Handle plugin, int numParams)
 {
 	int length = GetNativeCell(2);
 	
@@ -1983,17 +1978,18 @@ public int Native_GiveCreditsToUsers(Handle plugin, int params)
 	return 0;
 }
 
-public int Native_GiveItem(Handle plugin, int params)
+public int Native_GiveItem(Handle plugin, int numParams)
 {
 	any data = 0;
-	if (params == 5)
+
+	if (numParams == 5)
 		data = GetNativeCell(5);
 
 	GiveItem(GetNativeCell(1), GetNativeCell(2), GetNativeCell(3), GetNativeFunction(4), plugin, data);
 	return 0;
 }
 
-public int Native_GiveDifferentCreditsToUsers(Handle plugin, int params)
+public int Native_GiveDifferentCreditsToUsers(Handle plugin, int numParams)
 {
 	int length = GetNativeCell(2);
 	
@@ -2007,7 +2003,7 @@ public int Native_GiveDifferentCreditsToUsers(Handle plugin, int params)
 	return 0;
 }
 
-public int Native_ReloadItemCache(Handle plugin, int params)
+public int Native_ReloadItemCache(Handle plugin, int numParams)
 {       
 	ReloadItemCache();
 	return 0;

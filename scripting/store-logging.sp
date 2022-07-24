@@ -10,7 +10,7 @@ Handle g_log_file = null;
 char g_log_level_names[][] = { "     ", "ERROR", "WARN ", "INFO ", "DEBUG", "TRACE" };
 Store_LogLevel g_log_level = Store_LogLevelNone;
 Store_LogLevel g_log_flush_level = Store_LogLevelNone;
-bool g_log_errors_to_SM = false;
+bool g_log_errors_to_SM;
 char g_current_date[20];
 
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max) 
@@ -40,30 +40,33 @@ public Plugin myinfo =
 public void OnPluginStart() 
 {
 	LoadConfig();
+	
 	FormatTime(g_current_date, sizeof(g_current_date), "%Y-%m-%d", GetTime());
+	
 	CreateTimer(1.0, OnCheckDate, _, TIMER_REPEAT);
+	
 	if (g_log_level > Store_LogLevelNone)
 		CreateLogFileOrTurnOffLogging();
 }
 
 void LoadConfig() 
 {
-	KeyValues kv = CreateKeyValues("root");
+	KeyValues kv = new KeyValues("root");
     
 	char path[PLATFORM_MAX_PATH];
 	BuildPath(Path_SM, path, sizeof(path), "configs/store/logging.cfg");
     
-	if (!FileToKeyValues(kv, path))
+	if (!kv.ImportFromFile(path))
     {
-		CloseHandle(kv);
+		delete kv;
 		SetFailState("Can't read config file %s", path);
 	}
 
-	g_log_level = view_as<Store_LogLevel>(KvGetNum(kv, "log_level", 2));
-	g_log_flush_level = view_as<Store_LogLevel>(KvGetNum(kv, "log_flush_level", 2));
-	g_log_errors_to_SM = (KvGetNum(kv, "log_errors_to_SM", 1) > 0);
+	g_log_level = view_as<Store_LogLevel>(kv.GetNum("log_level", 2));
+	g_log_flush_level = view_as<Store_LogLevel>(kv.GetNum("log_flush_level", 2));
+	g_log_errors_to_SM = (kv.GetNum("log_errors_to_SM", 1) > 0);
 
-	CloseHandle(kv);
+	delete kv;
 }
 
 public void OnPluginEnd() 
@@ -97,8 +100,7 @@ void CloseLogFile()
 {
 	WriteMessageToLog(null, Store_LogLevelInfo, "Logging stopped");
 	FlushFile(g_log_file);
-	CloseHandle(g_log_file);
-	g_log_file = null;
+	delete g_log_file;
 }
 
 bool CreateLogFileOrTurnOffLogging()
@@ -230,21 +232,29 @@ void PrepareLogLine(Handle plugin, Store_LogLevel log_level, const char[] messag
 {
 	char plugin_name[100];
 	GetPluginFilename(plugin, plugin_name, sizeof(plugin_name)-1);
+	
 	// Make windows consistent with unix
 	ReplaceString(plugin_name, sizeof(plugin_name), "\\", "/");
+	
 	int name_end = strlen(plugin_name);
 	plugin_name[name_end++] = ']';
+	
 	for (int end=PLUGIN_NAME_RESERVED_LENGTH-1; name_end<end; ++name_end)
 		plugin_name[name_end] = ' ';
+	
 	plugin_name[name_end++] = 0;
+	
 	FormatTime(log_line, sizeof(log_line), "%Y-%m-%d %H:%M:%S [", GetTime());
 	int pos = strlen(log_line);
+	
 	pos += strcopy(log_line[pos], sizeof(log_line)-pos, plugin_name);
 	log_line[pos++] = ' ';
+	
 	pos += strcopy(log_line[pos], sizeof(log_line)-pos-5, g_log_level_names[log_level]);
 	log_line[pos++] = ' ';
 	log_line[pos++] = '|';
 	log_line[pos++] = ' ';
+	
 	pos += strcopy(log_line[pos], sizeof(log_line)-pos-2, message);
 	log_line[pos++] = '\n';
 	log_line[pos++] = 0;
