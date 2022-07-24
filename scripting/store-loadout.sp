@@ -70,9 +70,6 @@ public void OnPluginStart()
 	HookEvent("player_spawn", Event_PlayerSpawn);
 	
 	RegConsoleCmd("sm_loadout", Command_OpenLoadout);
-
-	AddCommandListener(Command_Say, "say");
-	AddCommandListener(Command_Say, "say_team");
 }
 
 /**
@@ -130,20 +127,8 @@ void LoadConfig()
 	delete kv;
 }
 
-/**
- * Called when a client has typed a message to the chat.
- *
- * @param client		Client index.
- * @param command		Command name, lower case.
- * @param args          Argument count. 
- *
- * @return				Action to take.
- */
-public Action Command_Say(int client, const char[] command, int args)
+public Action OnClientSayCommand(int client, const char[] command, const char[] sArgs)
 {
-	if (0 < client <= MaxClients && !IsClientInGame(client)) 
-		return Plugin_Continue;   
-	
 	char text[256];
 	GetCmdArgString(text, sizeof(text));
 	StripQuotes(text);

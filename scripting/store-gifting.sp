@@ -79,9 +79,6 @@ public void OnPluginStart()
 		RegConsoleCmd("sm_drop", Command_Drop);
 	}
 
-	AddCommandListener(Command_Say, "say");
-	AddCommandListener(Command_Say, "say_team");
-
 	HookEvent("player_disconnect", Event_PlayerDisconnect);
 }
 
@@ -202,6 +199,7 @@ public Action Command_Drop(int client, int args)
 public void DropGetCreditsCallback(int credits, DataPack pack)
 {
 	pack.Reset();
+
 	int client = pack.ReadCell();
 	int needed = pack.ReadCell();
 
@@ -211,6 +209,7 @@ public void DropGetCreditsCallback(int credits, DataPack pack)
 	}
 	else
 	{
+		delete pack;
 		PrintToChat(client, "%s%t", STORE_PREFIX, "Not enough credits", g_currencyName);
 	}
 }
@@ -218,8 +217,10 @@ public void DropGetCreditsCallback(int credits, DataPack pack)
 public void DropGiveCreditsCallback(int accountId, DataPack pack)
 {
 	pack.Reset();
+
 	int client = pack.ReadCell();
 	int credits = pack.ReadCell();
+
 	delete pack;
 
 	char value[32];
@@ -246,22 +247,10 @@ public Action Event_PlayerDisconnect(Event event, const char[] name, bool dontBr
 	return Plugin_Continue;
 }
 
-/**
- * Called when a client has typed a message to the chat.
- *
- * @param client		Client index.
- * @param command		Command name, lower case.
- * @param args          Argument count. 
- *
- * @return				Action to take.
- */
-public Action Command_Say(int client, const char[] command, int args)
+public Action OnClientSayCommand(int client, const char[] command, const char[] sArgs)
 {
-	if (0 < client <= MaxClients && !IsClientInGame(client)) 
-		return Plugin_Continue;   
-	
 	char text[256];
-	GetCmdArgString(text, sizeof(text));
+	strcopy(text, sizeof(text), sArgs);
 	StripQuotes(text);
 	
 	for (int index = 0; index < sizeof(g_menuCommands); index++) 
@@ -1030,6 +1019,8 @@ public void PickupGiveCallback(int accountId, DataPack pack)
 	pack.ReadString(itemType, sizeof(itemType));
 
 	int value = pack.ReadCell();
+
+	delete pack;
 
 	if (StrEqual(itemType, "credits"))
 	{

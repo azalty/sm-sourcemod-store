@@ -62,9 +62,6 @@ public void OnPluginStart()
 	Store_AddMainMenuItem("Shop", "Shop Description", _, OnMainMenuShopClick, 2);
 	
 	RegConsoleCmd("sm_shop", Command_OpenShop);
-
-	AddCommandListener(Command_Say, "say");
-	AddCommandListener(Command_Say, "say_team");
 }
 
 /**
@@ -107,22 +104,10 @@ public void OnMainMenuShopClick(int client, const char[] value)
 	OpenShop(client);
 }
 
-/**
- * Called when a client has typed a message to the chat.
- *
- * @param client		Client index.
- * @param command		Command name, lower case.
- * @param args          Argument count. 
- *
- * @return				Action to take.
- */
-public Action Command_Say(int client, const char[] command, int args)
+public Action OnClientSayCommand(int client, const char[] command, const char[] sArgs)
 {
-	if (0 < client <= MaxClients && !IsClientInGame(client)) 
-		return Plugin_Continue;   
-	
 	char text[256];
-	GetCmdArgString(text, sizeof(text));
+	strcopy(text, sizeof(text), sArgs);
 	StripQuotes(text);
 	
 	for (int index = 0; index < sizeof(g_menuCommands); index++) 

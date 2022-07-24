@@ -516,7 +516,7 @@ int GetItemIndex(int id)
 void GetItemAttributes(const char[] itemName, Function callback = INVALID_FUNCTION, Handle plugin = null, any data = 0) 
 {
 	DataPack pack = new DataPack();
-	WritePackString(pack, itemName);
+	pack.WriteString(itemName);
 	pack.WriteFunction(callback);
 	pack.WriteCell(plugin);
 	pack.WriteCell(data);
@@ -1072,6 +1072,8 @@ public void T_BuyItemGetCreditsCallback(int credits, DataPack pack)
 	
 	if (credits < g_items[GetItemIndex(itemId)].ItemPrice)
 	{
+		delete pack;
+		
 		Call_StartFunction(plugin, callback);
 		Call_PushCell(0);
 		Call_PushCell(arg);
