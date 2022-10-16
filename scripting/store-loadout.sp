@@ -130,7 +130,7 @@ void LoadConfig()
 public Action OnClientSayCommand(int client, const char[] command, const char[] sArgs)
 {
 	char text[256];
-	GetCmdArgString(text, sizeof(text));
+	strcopy(text, sizeof(text), sArgs);
 	StripQuotes(text);
 	
 	for (int index = 0; index < g_iMenuCommandCount; index++) 
